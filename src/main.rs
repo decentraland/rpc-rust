@@ -2,7 +2,7 @@ use protobuf::Message;
 
 use crate::protocol::index::RpcMessageHeader;
 
-mod protocol;
+pub mod protocol;
 
 fn main() {
     let mut message = RpcMessageHeader::new();
