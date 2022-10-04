@@ -12,11 +12,11 @@
 
 use std::env;
 
-use futures_util::{future, pin_mut, StreamExt};
+use futures_util::{future, pin_mut, StreamExt, SinkExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use rpc_rust::protocol::index::Request;
-use protobuf::Message;
+use protobuf::Message as ProtoMessage;
 
 #[tokio::main]
 async fn main() {
@@ -34,11 +34,14 @@ async fn main() {
     let (write, read) = ws_stream.split();
 
 
+    let input = stdin_rx.next().await;
 
-    // let stdin_to_ws = stdin_rx.map(Ok).forward(write);
-   let request = Request::default();
-   let bytes = request.write_to_bytes();
-
+    if let Some(input) = input {
+        let request = Request::default();
+        request.set_payload(input.to_string().into_bytes());
+        write.send(Message::binary(request.write_to_bytes().unwrap()));
+    }
+    
 
 
     let ws_to_stdout = {
