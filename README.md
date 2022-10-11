@@ -1,7 +1,7 @@
 # RPC Rust
 
 ## Requirements
-`brew install protobuf`
+`brew install protobuf` | `sudo apt-get install protobuf-compiler`
 
 ## Build
 

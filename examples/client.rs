@@ -12,47 +12,52 @@
 
 use std::env;
 
-use futures_util::{future, pin_mut, StreamExt, SinkExt};
+use futures_util::{future, pin_mut, SinkExt, StreamExt};
+use protobuf::Message as ProtoMessage;
+use rpc_rust::protocol::index::Request;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use rpc_rust::protocol::index::Request;
-use protobuf::Message as ProtoMessage;
 
 #[tokio::main]
 async fn main() {
-    let connect_addr =
-        env::args().nth(1).unwrap_or_else(|| panic!("this program requires at least one argument"));
+    let connect_addr = env::args()
+        .nth(1)
+        .unwrap_or_else(|| panic!("this program requires at least one argument"));
 
     let url = url::Url::parse(&connect_addr).unwrap();
 
-    let (stdin_tx, stdin_rx) = futures_channel::mpsc::unbounded();
+    let (stdin_tx, mut stdin_rx) = futures_channel::mpsc::unbounded();
     tokio::spawn(read_stdin(stdin_tx));
 
     let (ws_stream, _) = connect_async(url).await.expect("Failed to connect");
     println!("WebSocket handshake has been successfully completed");
 
-    let (write, read) = ws_stream.split();
-
+    let (mut write, mut read) = ws_stream.split();
 
     let input = stdin_rx.next().await;
 
     if let Some(input) = input {
-        let request = Request::default();
+        let mut request = Request::default();
         request.set_payload(input.to_string().into_bytes());
-        write.send(Message::binary(request.write_to_bytes().unwrap()));
+        write.send(Message::binary(request.write_to_bytes().unwrap())).await;
     }
-    
 
+    let res = read.next().await;
+    let data = res.unwrap();
 
-    let ws_to_stdout = {
-        read.for_each(|message| async {
-            let data = message.unwrap().into_data();
-            tokio::io::stdout().write_all(&data).await.unwrap();
-        })
-    };
+    if let Ok(msg) = data {
+        let request = Request::parse_from_bytes(&msg.into_data());
+        print!("{:?}", request.unwrap().payload);
+    }
+    // let ws_to_stdout = {
+    // read.for_each(|message| async {
+    //     let data = message.unwrap().into_data();
+    //     tokio::io::stdout().write_all(&data).await.unwrap();
+    // })
+    // };
 
-    pin_mut!(stdin_to_ws, ws_to_stdout);
-    future::select(stdin_to_ws, ws_to_stdout).await;
+    // pin_mut!(stdin_to_ws, ws_to_stdout);
+    // future::select(stdin_to_ws, ws_to_stdout).await;
 }
 
 // Our helper method which will read data from stdin and send it along the
