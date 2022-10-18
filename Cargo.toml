@@ -7,6 +7,19 @@ edition = "2021"
 
 [dependencies]
 protobuf = { version = "2.27.1", features = ["with-bytes"] }
+futures-channel = "0.3"
+hyper = { version = "0.14", default-features = false, features = ["http1", "server", "tcp"] }
+tokio = { version = "1.0.0", default-features = false, features = ["io-util", "io-std", "macros", "net", "rt-multi-thread", "time"] }
+url = "2.0.0"
+env_logger = "0.9"
+log = "0.4"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+tungstenite = { version = "0.17.3", default-features = false }
+tokio-tungstenite = "0.17.2"
+async-trait = "0.1.57"
 
 [build-dependencies]
 protoc-rust = "2.27.1"
+
+[dev-dependencies]
+

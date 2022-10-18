@@ -10,6 +10,15 @@ pub fn parse_message_identifier(value: u32) -> (u32, u32) {
     ((value >> 27) & 0xf, value & 0x07ffffff)
 }
 
+// Parse data to message type and message identifier
+pub fn parse_header(data: &[u8]) -> Option<(RpcMessageTypes, u32)> {
+    let message_header = RpcMessageHeader::parse_from_bytes(data).ok()?;
+    let (message_type, message_number) =
+        parse_message_identifier(message_header.get_message_identifier());
+    let rpc_message_type = RpcMessageTypes::from_i32(message_type as i32)?;
+    return Some((rpc_message_type, message_number))
+}
+
 /// Parse protocol message from bytes
 /// Returns None when message can't be parsed or should not do it
 pub fn parse_protocol_message(data: &[u8]) -> Option<(u32, Box<dyn Message>, u32)> {
