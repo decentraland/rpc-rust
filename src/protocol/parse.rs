@@ -16,7 +16,7 @@ pub fn parse_header(data: &[u8]) -> Option<(RpcMessageTypes, u32)> {
     let (message_type, message_number) =
         parse_message_identifier(message_header.get_message_identifier());
     let rpc_message_type = RpcMessageTypes::from_i32(message_type as i32)?;
-    return Some((rpc_message_type, message_number))
+    Some((rpc_message_type, message_number))
 }
 
 /// Parse protocol message from bytes
