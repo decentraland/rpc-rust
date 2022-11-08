@@ -1,6 +1,12 @@
 use protobuf::Message;
 
-use crate::{transports::{Transport, TransportEvent}, protocol::{parse::parse_header, index::{RpcMessageTypes, Request, RequestModule, CreatePort, DestroyPort}}};
+use crate::{
+    protocol::{
+        index::{CreatePort, DestroyPort, Request, RequestModule, RpcMessageTypes},
+        parse::parse_header,
+    },
+    transports::{Transport, TransportEvent},
+};
 
 pub struct RpcServer {
     transport: Option<Box<dyn Transport>>,
@@ -18,17 +24,13 @@ impl RpcServer {
         }
     }
 
-    pub fn attach_transport<T: Transport + 'static>(&mut self, mut transport: T)
-    {
+    pub fn attach_transport<T: Transport + 'static>(&mut self, transport: T) {
         self.transport = Some(Box::new(transport));
     }
 
-    pub async fn run(&mut self)
-    {
-        let transport = self.transport.expect("No transport attached");
+    pub async fn run(&mut self) {
         loop {
-            match self.transport.expect("No transport attached").receive().await
-            {
+            match self.transport.as_mut().expect("No transport attached").receive().await {
                 Ok(event) => {
                     if let TransportEvent::Connect = event {
                         println!("Transport connected");
@@ -41,7 +43,7 @@ impl RpcServer {
                         println!("Transport closed");
                         break;
                     }
-                },
+                }
                 Err(_) => {
                     println!("Transport error");
                     break;
@@ -54,13 +56,11 @@ impl RpcServer {
         self.handler = Some(handler);
     }
 
-    fn handle_message(&self, payload: Vec<u8>)
-    {
-        let transport = self.transport.expect("Transport not attached");
+    fn handle_message(&self, payload: Vec<u8>) {
+        let transport = self.transport.as_ref().expect("Transport not attached");
         let header = parse_header(&payload);
 
-        match header
-        {
+        match header {
             Some((message_type, message_number)) => {
                 match message_type {
                     RpcMessageTypes::RpcMessageTypes_REQUEST => {
@@ -79,15 +79,15 @@ impl RpcServer {
                         let destroy_port = DestroyPort::parse_from_bytes(&payload);
                         print!("DestroyPort");
                     }
-                    RpcMessageTypes::RpcMessageTypes_STREAM_ACK |
-                    RpcMessageTypes::RpcMessageTypes_STREAM_MESSAGE => {
+                    RpcMessageTypes::RpcMessageTypes_STREAM_ACK
+                    | RpcMessageTypes::RpcMessageTypes_STREAM_MESSAGE => {
                         // noops
                     }
                     _ => {
                         println!("Unknown message");
                     }
                 }
-            },
+            }
             None => {
                 println!("Invalid header");
             }
@@ -96,5 +96,7 @@ impl RpcServer {
 }
 
 impl RpcServerPort {
-    fn load_module(&self) -> () {}
+    fn load_module(&self) {
+        todo!()
+    }
 }
