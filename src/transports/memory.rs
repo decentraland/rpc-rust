@@ -38,7 +38,7 @@ impl Transport for MemoryTransport {
                     self.connected = true;
                     return Ok(TransportEvent::Connect);
                 }
-                Ok(TransportEvent::Message { data: event })
+                Ok(TransportEvent::Message(event))
             }
             None => Ok(TransportEvent::Close),
         }

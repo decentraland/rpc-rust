@@ -1,7 +1,9 @@
-use crate::transports::Transport;
+use protobuf::Message;
+
+use crate::{transports::{Transport, TransportEvent}, protocol::{parse::parse_header, index::{RpcMessageTypes, Request, RequestModule, CreatePort, DestroyPort}}};
 
 pub struct RpcServer {
-    transport: Box<dyn Transport>,
+    transport: Option<Box<dyn Transport>>,
     handler: Option<Box<dyn Fn(RpcServerPort)>>,
 }
 
@@ -9,19 +11,87 @@ pub struct RpcServerPort {}
 
 impl RpcServer {
     // TODO: allow multiple transports
-    pub fn create<T: Transport + 'static>(transport: T) -> Self {
+    pub fn create() -> Self {
         Self {
-            transport: Box::new(transport),
+            transport: None,
             handler: None,
         }
     }
 
-    pub fn create_port(&self) -> RpcServerPort {
-        RpcServerPort {}
+    pub fn attach_transport<T: Transport + 'static>(&mut self, mut transport: T)
+    {
+        self.transport = Some(Box::new(transport));
     }
 
-    pub fn set_handler<F: Fn(RpcServerPort) + 'static>(&mut self, handler: F) {
-        self.handler = Some(Box::new(handler));
+    pub async fn run(&mut self)
+    {
+        let transport = self.transport.expect("No transport attached");
+        loop {
+            match self.transport.expect("No transport attached").receive().await
+            {
+                Ok(event) => {
+                    if let TransportEvent::Connect = event {
+                        println!("Transport connected");
+                    } else if let TransportEvent::Message(payload) = event {
+                        println!("Transport new data");
+                        self.handle_message(payload);
+                    } else if let TransportEvent::Error(err) = event {
+                        println!("Transport error {}", err);
+                    } else if let TransportEvent::Close = event {
+                        println!("Transport closed");
+                        break;
+                    }
+                },
+                Err(_) => {
+                    println!("Transport error");
+                    break;
+                }
+            }
+        }
+    }
+
+    pub fn set_handler(&mut self, handler: Box<dyn Fn(RpcServerPort) + 'static + Send>) {
+        self.handler = Some(handler);
+    }
+
+    fn handle_message(&self, payload: Vec<u8>)
+    {
+        let transport = self.transport.expect("Transport not attached");
+        let header = parse_header(&payload);
+
+        match header
+        {
+            Some((message_type, message_number)) => {
+                match message_type {
+                    RpcMessageTypes::RpcMessageTypes_REQUEST => {
+                        let request = Request::parse_from_bytes(&payload);
+                        print!("Request");
+                    }
+                    RpcMessageTypes::RpcMessageTypes_REQUEST_MODULE => {
+                        let request_module = RequestModule::parse_from_bytes(&payload);
+                        print!("RequestModule");
+                    }
+                    RpcMessageTypes::RpcMessageTypes_CREATE_PORT => {
+                        let create_port = CreatePort::parse_from_bytes(&payload);
+                        print!("CreatePort");
+                    }
+                    RpcMessageTypes::RpcMessageTypes_DESTROY_PORT => {
+                        let destroy_port = DestroyPort::parse_from_bytes(&payload);
+                        print!("DestroyPort");
+                    }
+                    RpcMessageTypes::RpcMessageTypes_STREAM_ACK |
+                    RpcMessageTypes::RpcMessageTypes_STREAM_MESSAGE => {
+                        // noops
+                    }
+                    _ => {
+                        println!("Unknown message");
+                    }
+                }
+            },
+            None => {
+                println!("Invalid header");
+            }
+        }
     }
 }
 
