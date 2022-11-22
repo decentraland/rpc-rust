@@ -16,4 +16,5 @@ async-trait = "0.1.57"
 protoc-rust = "2.27.1"
 
 [dev-dependencies]
+tokio-scoped = "0.2.0"
 

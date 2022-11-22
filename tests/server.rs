@@ -7,26 +7,25 @@ struct BookContext {
 
 #[tokio::test]
 async fn call_procedure() {
-    // 1- Create Transport
+    tokio_scoped::scope(|scope| {
+        // 1- Create Transport
+        let (_client_transport, server_transport) = MemoryTransport::create();
+        scope.spawn(async {
+            // 2- Create Server with Transport
+            let mut server = RpcServer::create();
+            // 3- Server listen to Create Port request
+            server.set_handler(|port: &mut RpcServerPort| {
+                println!("Port {} created!", port.name);
+                port.register("GetBook".to_string(), |request| {
+                    //return GetBookResponse();
+                });
+            });
 
-    let (_client_transport, server_transport) = MemoryTransport::create();
+            server.attach_transport(server_transport);
 
-    // 2- Create Server with Transport
-    let mut server = RpcServer::create();
-
-    // 3- Server listen to Create Port request
-    server.set_handler(|port: &mut RpcServerPort| {
-        println!("Port {} created!", port.name);
-        port.register("GetBook".to_string(), |request|{
-
-            // return GetBookResponse();
+            server.run().await;
         });
     });
-
-    server.attach_transport(server_transport);
-
-    server.run().await
-
     /*let client_handle = tokio::spawn(||{
         // 4- Client -> Create Port
         let client = RpcClient::create(client_transport);

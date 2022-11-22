@@ -15,7 +15,7 @@ use crate::{
 type PortHandlerFn = dyn Fn(&mut RpcServerPort) + Send + Sync + 'static;
 
 pub struct RpcServer {
-    transport: Option<Box<dyn Transport>>,
+    transport: Option<Box<dyn Transport + Send + Sync>>,
     handler: Option<Box<PortHandlerFn>>,
 }
 impl RpcServer {
@@ -26,7 +26,7 @@ impl RpcServer {
         }
     }
 
-    pub fn attach_transport<T: Transport + 'static>(&mut self, transport: T) {
+    pub fn attach_transport<T: Transport + Send + Sync + 'static>(&mut self, transport: T) {
         self.transport = Some(Box::new(transport));
     }
 
@@ -63,7 +63,10 @@ impl RpcServer {
         }
     }
 
-    pub fn set_handler<H: Fn(&mut RpcServerPort) + Send + Sync + 'static>(&mut self, handler: H) {
+    pub fn set_handler<H>(&mut self, handler: H)
+    where
+        H: Fn(&mut RpcServerPort) + Send + Sync + 'static,
+    {
         self.handler = Some(Box::new(handler));
     }
 
@@ -80,9 +83,7 @@ impl RpcServer {
                 match message_type {
                     RpcMessageTypes::RpcMessageTypes_REQUEST => {
                         let request = Request::parse_from_bytes(&payload)?;
-                        if let Some(port) = ports.get(&request.port_id) {
-
-                        }
+                        if let Some(port) = ports.get(&request.port_id) {}
                         print!("Request {:?}", request);
                     }
                     RpcMessageTypes::RpcMessageTypes_REQUEST_MODULE => {
@@ -95,7 +96,7 @@ impl RpcServer {
                         print!("CreatePort {:?}", create_port);
                         let port_name = create_port.port_name;
                         let mut port = RpcServerPort::new(port_name.clone());
-                        
+
                         if let Some(handler) = &self.handler {
                             handler(&mut port);
                         }
@@ -130,7 +131,7 @@ impl RpcServer {
         Ok(())
     }
 }
-type RequestHandler = dyn Fn(&[u8]);
+type RequestHandler = dyn Fn(&[u8]) + Send + Sync;
 pub struct RpcServerPort {
     pub name: String,
     pub handlers: HashMap<String, Box<RequestHandler>>,
@@ -143,7 +144,7 @@ impl RpcServerPort {
             handlers: HashMap::new(),
         }
     }
-    pub fn register<H: Fn(&[u8]) + 'static>(&mut self, name: String, handler: H) {
+    pub fn register<H: Fn(&[u8]) + Send + Sync + 'static>(&mut self, name: String, handler: H) {
         self.handlers.insert(name, Box::new(handler));
     }
     fn load_module(&self) {
