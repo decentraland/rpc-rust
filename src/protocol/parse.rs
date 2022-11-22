@@ -5,6 +5,11 @@ use super::index::{
     RequestModuleResponse, Response, RpcMessageHeader, RpcMessageTypes, StreamMessage,
 };
 
+/// Build message identifier from type and number
+pub fn build_message_identifier(message_type: u32, message_number: u32) -> u32 {
+    ((message_type & 0xf) << 27) | (message_number & 0x07ffffff)
+}
+
 /// Parse message type and number from message identifier
 pub fn parse_message_identifier(value: u32) -> (u32, u32) {
     ((value >> 27) & 0xf, value & 0x07ffffff)

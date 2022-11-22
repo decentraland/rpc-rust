@@ -1,21 +1,33 @@
+use protobuf::Message;
+use rpc_rust::protocol::index::CreatePort;
+use rpc_rust::protocol::parse::build_message_identifier;
 use rpc_rust::server::{RpcServer, RpcServerPort};
-use rpc_rust::transports::Transport;
 use rpc_rust::transports::memory::MemoryTransport;
+use rpc_rust::transports::Transport;
 
 struct BookContext {
     books: Vec<String>,
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads=1)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn call_procedure() {
     async_scoped::TokioScope::scope_and_block(|scope| {
         // 1- Create Transport
-        let (_client_transport, server_transport) = MemoryTransport::create();
+        let (client_transport, server_transport) = MemoryTransport::create();
 
         scope.spawn(async move {
-            _client_transport.send(vec![0]).await;
+            let connect_message = vec![0];
+            client_transport.send(connect_message).await;
+
+            let create_port = CreatePort {
+                message_identifier: build_message_identifier(5, 1),
+                port_name: "testport".to_string(),
+                ..Default::default()
+            };
+
+            let _result = client_transport.send(create_port.write_to_bytes().unwrap()).await;
         });
-        
+
         scope.spawn(async {
             // 2- Create Server with Transport
             let mut server = RpcServer::create();
