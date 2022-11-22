@@ -5,9 +5,9 @@ struct BookContext {
     books: Vec<String>,
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads=1)]
 async fn call_procedure() {
-    tokio_scoped::scope(|scope| {
+    async_scoped::TokioScope::scope_and_block(|scope| {
         // 1- Create Transport
         let (_client_transport, server_transport) = MemoryTransport::create();
         scope.spawn(async {
