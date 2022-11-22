@@ -1,4 +1,5 @@
 use rpc_rust::server::{RpcServer, RpcServerPort};
+use rpc_rust::transports::Transport;
 use rpc_rust::transports::memory::MemoryTransport;
 
 struct BookContext {
@@ -10,6 +11,11 @@ async fn call_procedure() {
     async_scoped::TokioScope::scope_and_block(|scope| {
         // 1- Create Transport
         let (_client_transport, server_transport) = MemoryTransport::create();
+
+        scope.spawn(async move {
+            _client_transport.send(vec![0]).await;
+        });
+        
         scope.spawn(async {
             // 2- Create Server with Transport
             let mut server = RpcServer::create();
