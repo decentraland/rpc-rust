@@ -13,7 +13,7 @@ struct BookContext {
 async fn call_procedure() {
     async_scoped::TokioScope::scope_and_block(|scope| {
         // 1- Create Transport
-        let (client_transport, server_transport) = MemoryTransport::create();
+        let (mut client_transport, server_transport) = MemoryTransport::create();
 
         scope.spawn(async move {
             let connect_message = vec![0];
@@ -25,7 +25,13 @@ async fn call_procedure() {
                 ..Default::default()
             };
 
-            let _result = client_transport.send(create_port.write_to_bytes().unwrap()).await;
+            let _result = client_transport
+                .send(create_port.write_to_bytes().unwrap())
+                .await;
+
+            // Wait for the server response
+            let res = client_transport.receive().await;
+            println!("{:?}", res)
         });
 
         scope.spawn(async {

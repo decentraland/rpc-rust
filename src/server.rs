@@ -93,7 +93,7 @@ impl RpcServer {
                     RpcMessageTypes::RpcMessageTypes_CREATE_PORT => {
                         let port_id = (ports.len() + 1) as u32;
                         let create_port = CreatePort::parse_from_bytes(&payload)?;
-                        print!("CreatePort {:?}", create_port);
+                        println!("CreatePort {:?}", create_port);
                         let port_name = create_port.port_name;
                         let mut port = RpcServerPort::new(port_name.clone());
 
