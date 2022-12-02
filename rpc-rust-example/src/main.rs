@@ -1,14 +1,12 @@
 use protobuf::Message;
 use rpc_rust::{
-    client,
     protocol::{
-        self,
         index::{
             CreatePort, CreatePortResponse, Request, RequestModule, RequestModuleResponse, Response,
         },
         parse::build_message_identifier,
     },
-    server::{self, RpcServer, RpcServerPort},
+    server::{RpcServer, RpcServerPort},
     transports::{self, Transport, TransportEvent},
 };
 
