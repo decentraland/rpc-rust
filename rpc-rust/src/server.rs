@@ -1,15 +1,20 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, hash::Hash, rc::Rc, sync::Arc};
 
-use protobuf::{Message, ProtobufError};
+use protobuf::{Message, ProtobufError, RepeatedField};
 
 use crate::{
     protocol::{
         index::{
-            CreatePort, CreatePortResponse, DestroyPort, Request, RequestModule, RpcMessageTypes,
+            CreatePort, CreatePortResponse, DestroyPort, ModuleProcedure, Request, RequestModule,
+            RequestModuleResponse, Response, RpcMessageTypes,
         },
         parse::parse_header,
     },
     transports::{Transport, TransportEvent},
+    types::{
+        ServerModuleDeclaration, ServerModuleProcedures, ServiceModuleDefinition,
+        UnaryRequestHandler,
+    },
 };
 
 type PortHandlerFn = dyn Fn(&mut RpcServerPort) + Send + Sync + 'static;
@@ -83,12 +88,55 @@ impl RpcServer {
                 match message_type {
                     RpcMessageTypes::RpcMessageTypes_REQUEST => {
                         let request = Request::parse_from_bytes(&payload)?;
-                        if let Some(port) = ports.get(&request.port_id) {}
                         print!("Request {:?}", request);
+                        if let Some(port) = ports.get(&request.port_id) {
+                            let procedure_response =
+                                port.call_procedure(request.procedure_id, request.payload);
+
+                            let response = Response {
+                                message_identifier,
+                                payload: procedure_response,
+                                ..Default::default()
+                            };
+
+                            transport
+                                .send(response.write_to_bytes()?)
+                                .await
+                                .expect("message to be sent")
+                        } else {
+                            println!("> REQUEST > no port for given id ")
+                        }
                     }
                     RpcMessageTypes::RpcMessageTypes_REQUEST_MODULE => {
                         let request_module = RequestModule::parse_from_bytes(&payload)?;
-                        print!("RequestModule {:?}", request_module);
+                        println!("> REQUEST_MODULE > request: {:?}", request_module);
+                        if let Some(port) = ports.get_mut(&request_module.port_id) {
+                            if let Ok(server_module_declaration) =
+                                port.load_module(request_module.module_name)
+                            {
+                                let mut response = RequestModuleResponse::default();
+                                response.set_port_id(request_module.port_id);
+                                response.set_message_identifier(message_identifier);
+                                let mut procedures: RepeatedField<ModuleProcedure> =
+                                    RepeatedField::default();
+                                for procedure in &server_module_declaration.procedures {
+                                    let mut module_procedure = ModuleProcedure::default();
+                                    module_procedure.set_procedure_id(procedure.procedure_id);
+                                    module_procedure
+                                        .set_procedure_name(procedure.procedure_name.clone());
+                                    procedures.push(module_procedure)
+                                }
+                                response.set_procedures(procedures);
+                                transport
+                                    .send(response.write_to_bytes()?)
+                                    .await
+                                    .expect("message to be sent")
+                            } else {
+                                println!("> REQUEST_MODULE > unable to load the module")
+                            }
+                        } else {
+                            println!("> REQUEST_MODULE > unable to get the port")
+                        }
                     }
                     RpcMessageTypes::RpcMessageTypes_CREATE_PORT => {
                         let port_id = (ports.len() + 1) as u32;
@@ -131,23 +179,76 @@ impl RpcServer {
         Ok(())
     }
 }
-type RequestHandler = dyn Fn(&[u8]) + Send + Sync;
 pub struct RpcServerPort {
     pub name: String,
-    pub handlers: HashMap<String, Box<RequestHandler>>,
+    registered_modules: HashMap<String, ServiceModuleDefinition>,
+    loaded_modules: HashMap<String, ServerModuleDeclaration>,
+    procedures: HashMap<u32, Arc<Box<UnaryRequestHandler>>>,
 }
 
 impl RpcServerPort {
     pub fn new(name: String) -> Self {
         RpcServerPort {
             name,
-            handlers: HashMap::new(),
+            registered_modules: HashMap::new(),
+            loaded_modules: HashMap::new(),
+            procedures: HashMap::new(),
         }
     }
-    pub fn register<H: Fn(&[u8]) + Send + Sync + 'static>(&mut self, name: String, handler: H) {
-        self.handlers.insert(name, Box::new(handler));
+
+    pub fn register_module(
+        &mut self,
+        module_name: String,
+        service_definition: ServiceModuleDefinition,
+    ) {
+        self.registered_modules
+            .insert(module_name, service_definition);
     }
-    fn load_module(&self) {
-        todo!()
+
+    fn load_module(&mut self, module_name: String) -> Result<&ServerModuleDeclaration, String> {
+        if self.loaded_modules.get(&module_name).is_some() {
+            Ok(self.loaded_modules.get(&module_name).unwrap())
+        } else {
+            let module_generator = self.registered_modules.get(&module_name);
+            if module_generator.is_none() {
+                Err(String::from(
+                    "the module requested is not avaialable for the port",
+                ))
+            } else {
+                let mut server_module_declaration = ServerModuleDeclaration {
+                    procedures: Vec::new(),
+                };
+
+                let definitions = module_generator.unwrap().get_definitions();
+                let mut procedure_id = 1;
+
+                for def in definitions {
+                    let current_id = procedure_id;
+                    self.procedures.insert(current_id, def.1.clone());
+                    server_module_declaration
+                        .procedures
+                        .push(ServerModuleProcedures {
+                            procedure_name: def.0.clone(),
+                            procedure_id: current_id,
+                        });
+                    procedure_id += 1
+                }
+
+                self.loaded_modules
+                    .insert(module_name.clone(), server_module_declaration);
+
+                Ok(self.loaded_modules.get(&module_name).unwrap())
+            }
+        }
+    }
+
+    pub fn call_procedure(&self, procedure_id: u32, payload: Vec<u8>) -> Vec<u8> {
+        if self.procedures.get(&procedure_id).is_some() {
+            let handler = self.procedures.get(&procedure_id).unwrap();
+            handler(&payload)
+        } else {
+            println!("Error on calling procedure");
+            Vec::new()
+        }
     }
 }
