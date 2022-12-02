@@ -5,10 +5,6 @@ use rpc_rust::server::{RpcServer, RpcServerPort};
 use rpc_rust::transports::memory::MemoryTransport;
 use rpc_rust::transports::Transport;
 
-struct BookContext {
-    books: Vec<String>,
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn call_procedure() {
     async_scoped::TokioScope::scope_and_block(|scope| {
@@ -17,7 +13,7 @@ async fn call_procedure() {
 
         scope.spawn(async move {
             let connect_message = vec![0];
-            client_transport.send(connect_message).await;
+            client_transport.send(connect_message).await.unwrap();
 
             let create_port = CreatePort {
                 message_identifier: build_message_identifier(5, 1),
@@ -40,9 +36,6 @@ async fn call_procedure() {
             // 3- Server listen to Create Port request
             server.set_handler(|port: &mut RpcServerPort| {
                 println!("Port {} created!", port.name);
-                port.register("GetBook".to_string(), |request| {
-                    //return GetBookResponse();
-                });
             });
 
             server.attach_transport(server_transport);
@@ -50,6 +43,9 @@ async fn call_procedure() {
             server.run().await;
         });
     });
+
+    // Client Flow Nice to have:
+
     /*let client_handle = tokio::spawn(||{
         // 4- Client -> Create Port
         let client = RpcClient::create(client_transport);

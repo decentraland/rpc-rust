@@ -8,4 +8,3 @@ fn main() {
         .run()
         .expect("Running protoc failed.");
 }
-

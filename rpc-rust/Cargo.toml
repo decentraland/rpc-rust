@@ -1,0 +1,20 @@
+[package]
+name = "rpc-rust"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+protobuf = { version = "2.27.1", features = ["with-bytes"] }
+futures-channel = "0.3"
+tokio = { version = "1.0.0", default-features = false, features = ["io-util", "io-std", "macros", "net", "rt-multi-thread", "time", "sync"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+async-trait = "0.1.57"
+
+[build-dependencies]
+protoc-rust = "2.27.1"
+
+[dev-dependencies]
+async-scoped = { version = "0.7.1", features = ["use-tokio", "tokio"]}
+
