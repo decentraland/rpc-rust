@@ -5,7 +5,13 @@ use super::index::{
     RequestModuleResponse, Response, RpcMessageHeader, RpcMessageTypes, StreamMessage,
 };
 
-/// Build message identifier from type and number
+/// Build message identifier from type and number.
+///
+/// ```message_identifier``` packs two numbers:
+///
+/// Bits from 1 to 28 correspond to the sequential message id (analogous to JSON-RPC 2)
+///
+/// Bits from 28 to 32 correspond to message_type
 pub fn build_message_identifier(message_type: u32, message_number: u32) -> u32 {
     ((message_type & 0xf) << 27) | (message_number & 0x07ffffff)
 }
