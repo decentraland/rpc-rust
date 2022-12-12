@@ -19,6 +19,7 @@ use service::{api, book_service};
 
 #[tokio::main]
 async fn main() {
+    // Rebuild proto when run it
     protoc_rust::Codegen::new()
         .out_dir("examples/integration/service")
         .inputs(["examples/integration/service/api.proto"])
