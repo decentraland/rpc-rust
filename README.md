@@ -6,3 +6,7 @@
 ## Build
 
 `cargo build`
+
+## Run the integration example
+
+`make example`
