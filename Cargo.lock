@@ -342,17 +342,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rpc-rust-example"
-version = "0.1.0"
-dependencies = [
- "async-scoped",
- "protobuf",
- "protoc-rust",
- "rpc-rust",
- "tokio",
-]
-
-[[package]]
 name = "slab"
 version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
