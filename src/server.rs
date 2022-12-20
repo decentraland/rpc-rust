@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, u8};
 
 use protobuf::{Message, ProtobufError, RepeatedField};
 
@@ -75,6 +75,102 @@ impl RpcServer {
         self.handler = Some(Box::new(handler));
     }
 
+    async fn handle_request<T: Transport + ?Sized>(
+        &self,
+        message_identifier: u32,
+        payload: &[u8],
+        ports: &mut HashMap<u32, RpcServerPort>,
+        transport: impl AsRef<T>,
+    ) -> Result<(), ProtobufError> {
+        let request = Request::parse_from_bytes(payload)?;
+        print!("Request {:?}", request);
+        if let Some(port) = ports.get(&request.port_id) {
+            let procedure_response = port.call_procedure(request.procedure_id, request.payload);
+
+            let response = Response {
+                message_identifier,
+                payload: procedure_response,
+                ..Default::default()
+            };
+
+            transport
+                .as_ref()
+                .send(response.write_to_bytes()?)
+                .await
+                .expect("message to be sent");
+        } else {
+            println!("> REQUEST > no port for given id ");
+        }
+        Ok(())
+    }
+
+    async fn handle_request_module<T: Transport + ?Sized>(
+        &self,
+        message_identifier: u32,
+        payload: &[u8],
+        ports: &mut HashMap<u32, RpcServerPort>,
+        transport: impl AsRef<T>,
+    ) -> Result<(), ProtobufError> {
+        let request_module = RequestModule::parse_from_bytes(payload)?;
+        println!("> REQUEST_MODULE > request: {:?}", request_module);
+        if let Some(port) = ports.get_mut(&request_module.port_id) {
+            if let Ok(server_module_declaration) = port.load_module(request_module.module_name) {
+                let mut response = RequestModuleResponse::default();
+                response.set_port_id(request_module.port_id);
+                response.set_message_identifier(message_identifier);
+                let mut procedures: RepeatedField<ModuleProcedure> = RepeatedField::default();
+                for procedure in &server_module_declaration.procedures {
+                    let mut module_procedure = ModuleProcedure::default();
+                    module_procedure.set_procedure_id(procedure.procedure_id);
+                    module_procedure.set_procedure_name(procedure.procedure_name.clone());
+                    procedures.push(module_procedure)
+                }
+                response.set_procedures(procedures);
+                transport
+                    .as_ref()
+                    .send(response.write_to_bytes()?)
+                    .await
+                    .expect("message to be sent")
+            } else {
+                println!("> REQUEST_MODULE > unable to load the module")
+            }
+        } else {
+            println!("> REQUEST_MODULE > unable to get the port")
+        }
+
+        Ok(())
+    }
+
+    async fn handle_create_port<T: Transport + ?Sized>(
+        &self, 
+        message_identifier: u32,
+        payload: &[u8],
+        ports: &mut HashMap<u32, RpcServerPort>,
+        transport: impl AsRef<T>,
+    ) -> Result<(), ProtobufError> {
+        let port_id = (ports.len() + 1) as u32;
+        let create_port = CreatePort::parse_from_bytes(payload)?;
+        println!("CreatePort {:?}", create_port);
+        let port_name = create_port.port_name;
+        let mut port = RpcServerPort::new(port_name.clone());
+
+        if let Some(handler) = &self.handler {
+            handler(&mut port);
+        }
+
+        ports.insert(port_id, port);
+
+        let mut response = CreatePortResponse::new();
+        response.message_identifier = message_identifier;
+        response.port_id = port_id;
+        transport.as_ref()
+            .send(response.write_to_bytes()?)
+            .await
+            .expect("message to be sent");
+
+        Ok(())
+    }
+
     async fn handle_message(
         &self,
         payload: Vec<u8>,
@@ -87,77 +183,15 @@ impl RpcServer {
             Some((message_type, message_identifier)) => {
                 match message_type {
                     RpcMessageTypes::RpcMessageTypes_REQUEST => {
-                        let request = Request::parse_from_bytes(&payload)?;
-                        print!("Request {:?}", request);
-                        if let Some(port) = ports.get(&request.port_id) {
-                            let procedure_response =
-                                port.call_procedure(request.procedure_id, request.payload);
-
-                            let response = Response {
-                                message_identifier,
-                                payload: procedure_response,
-                                ..Default::default()
-                            };
-
-                            transport
-                                .send(response.write_to_bytes()?)
-                                .await
-                                .expect("message to be sent")
-                        } else {
-                            println!("> REQUEST > no port for given id ")
-                        }
+                        self.handle_request(message_identifier, &payload, ports, transport).await?
                     }
                     RpcMessageTypes::RpcMessageTypes_REQUEST_MODULE => {
-                        let request_module = RequestModule::parse_from_bytes(&payload)?;
-                        println!("> REQUEST_MODULE > request: {:?}", request_module);
-                        if let Some(port) = ports.get_mut(&request_module.port_id) {
-                            if let Ok(server_module_declaration) =
-                                port.load_module(request_module.module_name)
-                            {
-                                let mut response = RequestModuleResponse::default();
-                                response.set_port_id(request_module.port_id);
-                                response.set_message_identifier(message_identifier);
-                                let mut procedures: RepeatedField<ModuleProcedure> =
-                                    RepeatedField::default();
-                                for procedure in &server_module_declaration.procedures {
-                                    let mut module_procedure = ModuleProcedure::default();
-                                    module_procedure.set_procedure_id(procedure.procedure_id);
-                                    module_procedure
-                                        .set_procedure_name(procedure.procedure_name.clone());
-                                    procedures.push(module_procedure)
-                                }
-                                response.set_procedures(procedures);
-                                transport
-                                    .send(response.write_to_bytes()?)
-                                    .await
-                                    .expect("message to be sent")
-                            } else {
-                                println!("> REQUEST_MODULE > unable to load the module")
-                            }
-                        } else {
-                            println!("> REQUEST_MODULE > unable to get the port")
-                        }
+                        self.handle_request_module(message_identifier, &payload, ports, transport)
+                            .await?
                     }
                     RpcMessageTypes::RpcMessageTypes_CREATE_PORT => {
-                        let port_id = (ports.len() + 1) as u32;
-                        let create_port = CreatePort::parse_from_bytes(&payload)?;
-                        println!("CreatePort {:?}", create_port);
-                        let port_name = create_port.port_name;
-                        let mut port = RpcServerPort::new(port_name.clone());
-
-                        if let Some(handler) = &self.handler {
-                            handler(&mut port);
-                        }
-
-                        ports.insert(port_id, port);
-
-                        let mut response = CreatePortResponse::new();
-                        response.message_identifier = message_identifier;
-                        response.port_id = port_id;
-                        transport
-                            .send(response.write_to_bytes()?)
-                            .await
-                            .expect("message to be sent");
+                        self.handle_create_port(message_identifier, &payload, ports, transport)
+                            .await?
                     }
                     RpcMessageTypes::RpcMessageTypes_DESTROY_PORT => {
                         let destroy_port = DestroyPort::parse_from_bytes(&payload)?;
