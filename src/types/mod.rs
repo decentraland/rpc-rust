@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 pub type UnaryRequestHandler = dyn Fn(&[u8]) -> Vec<u8> + Send + Sync;
 
+#[derive(Default)]
 pub struct ServiceModuleDefinition {
     definitions: HashMap<String, Arc<Box<UnaryRequestHandler>>>,
 }
