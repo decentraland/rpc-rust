@@ -35,8 +35,14 @@ pub enum ServerError {
     ProcedureError,
 }
 
+/// RpcServer receives and process different requests from the RpcClient
+///
+/// Once a RpcServer is inited, you should attach a transport and handler
+/// for the port creation.
 pub struct RpcServer {
+    /// The Transport used for the communicatio between `RpcClient` and `RpcServer`
     transport: Option<Box<dyn Transport + Send + Sync>>,
+    /// The handler executed when a new port is created
     handler: Option<Box<PortHandlerFn>>,
 }
 impl RpcServer {
@@ -47,10 +53,12 @@ impl RpcServer {
         }
     }
 
+    /// Attach the server half of the transport for Client<>Server comms
     pub fn attach_transport<T: Transport + Send + Sync + 'static>(&mut self, transport: T) {
         self.transport = Some(Box::new(transport));
     }
 
+    /// Start listening messages from the attached transport
     pub async fn run(&mut self) {
         let mut ports: HashMap<u32, RpcServerPort> = HashMap::new();
         loop {
@@ -83,6 +91,10 @@ impl RpcServer {
         }
     }
 
+    /// Set a handler for the port creation
+    ///
+    /// When a port is created, a service should be registered
+    /// for the port.
     pub fn set_handler<H>(&mut self, handler: H)
     where
         H: Fn(&mut RpcServerPort) + Send + Sync + 'static,
@@ -90,6 +102,13 @@ impl RpcServer {
         self.handler = Some(Box::new(handler));
     }
 
+    /// Handle the requests for a procedure call
+    ///
+    /// # Arguments
+    ///
+    /// * `message_identifier` - A 32-bit unsigned number created by `build_message_identifier` in `protocol/parse.rs`
+    /// * `payload` - Slice of bytes containing the request payload encoded with protobuf
+    /// * `ports` - ports registered in the `RpcServer`
     async fn handle_request(
         &self,
         message_identifier: u32,
@@ -128,6 +147,13 @@ impl RpcServer {
         }
     }
 
+    /// Handle the requests when a client wants to load a specific registered module and then starts calling the procedures
+    ///
+    /// # Arguments
+    ///
+    /// * `message_identifier` - A 32-bit unsigned number created by `build_message_identifier` in `protocol/parse.rs`
+    /// * `payload` - Slice of bytes containing the request payload encoded with protobuf
+    /// * `ports` - ports registered in the `RpcServer`
     async fn handle_request_module(
         &self,
         message_identifier: u32,
@@ -171,6 +197,15 @@ impl RpcServer {
         Ok(())
     }
 
+    /// Handle the requests when a client wants to create a port.
+    ///
+    /// The `handler` registered with `set_handler` function is called here.
+    ///
+    /// # Arguments
+    ///
+    /// * `message_identifier` - A 32-bit unsigned number created by `build_message_identifier` in `protocol/parse.rs`
+    /// * `payload` - Slice of bytes containing the request payload encoded with protobuf
+    /// * `ports` - ports registered in the `RpcServer`
     async fn handle_create_port(
         &self,
         message_identifier: u32,
@@ -208,6 +243,12 @@ impl RpcServer {
         Ok(())
     }
 
+    /// Handle the requests when a client wants to destroy a port because no longer needed
+    ///
+    /// # Arguments
+    ///
+    /// * `payload` - Slice of bytes containing the request payload encoded with protobuf
+    /// * `ports` - ports registered in the `RpcServer`
     fn handle_destroy_port(
         &self,
         payload: &[u8],
@@ -222,6 +263,16 @@ impl RpcServer {
         Ok(())
     }
 
+    /// Handle every request from the client.
+    ///
+    /// Then, parse the "header" that contains the `message_type` and `message_identifier`
+    ///
+    /// This allows us know which function should finially handle the request
+    ///
+    /// # Arguments
+    ///
+    /// * `payload` - Vec of bytes containing the request payload encoded with protobuf
+    /// * `ports` - ports registered in the `RpcServer`
     async fn handle_message(
         &self,
         payload: Vec<u8>,
@@ -258,10 +309,20 @@ impl RpcServer {
         Ok(())
     }
 }
+
+/// RpcServerPort is what a RpcServer contains to handle different services/modules
 pub struct RpcServerPort {
+    /// RpcServer name
     pub name: String,
+    /// Registered modules contains the name and module/service definition
+    ///
+    /// A module can be registered but not loaded
     registered_modules: HashMap<String, ServiceModuleDefinition>,
+    /// Loaded modules contains the name and a collection of procedures with id and the name for each one
+    ///
+    /// A module is loaded when the client requests to.
     loaded_modules: HashMap<String, ServerModuleDeclaration>,
+    /// Procedures contains the id and the handler for each procedure
     procedures: HashMap<u32, Arc<Box<UnaryRequestHandler>>>,
 }
 
@@ -275,6 +336,7 @@ impl RpcServerPort {
         }
     }
 
+    /// Just register the module in the port
     pub fn register_module(
         &mut self,
         module_name: String,
@@ -284,6 +346,9 @@ impl RpcServerPort {
             .insert(module_name, service_definition);
     }
 
+    /// It checks if the module is already loaded and return it.
+    ///
+    /// Otherwise, it will get the module definition from the `registered_modules` and load it
     fn load_module(&mut self, module_name: String) -> ServerResult<&ServerModuleDeclaration> {
         if self.loaded_modules.contains_key(&module_name) {
             Ok(self
@@ -326,6 +391,7 @@ impl RpcServerPort {
         }
     }
 
+    /// It will look up the procedure id in the port's `procedures` and execute the procedure's handler
     pub fn call_procedure(&self, procedure_id: u32, payload: Vec<u8>) -> ServerResult<Vec<u8>> {
         match self.procedures.get(&procedure_id) {
             Some(procedure_handler) => Ok(procedure_handler(&payload)),
