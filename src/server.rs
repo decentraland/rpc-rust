@@ -44,12 +44,15 @@ pub struct RpcServer {
     transport: Option<Box<dyn Transport + Send + Sync>>,
     /// The handler executed when a new port is created
     handler: Option<Box<PortHandlerFn>>,
+    /// Ports registered in the `RpcServer`
+    ports: HashMap<u32, RpcServerPort>,
 }
 impl RpcServer {
     pub fn create() -> Self {
         Self {
             transport: None,
             handler: None,
+            ports: HashMap::new(),
         }
     }
 
@@ -60,7 +63,6 @@ impl RpcServer {
 
     /// Start listening messages from the attached transport
     pub async fn run(&mut self) {
-        let mut ports: HashMap<u32, RpcServerPort> = HashMap::new();
         loop {
             match self
                 .transport
@@ -72,12 +74,10 @@ impl RpcServer {
                 Ok(event) => match event {
                     TransportEvent::Connect => println!("Transport connected"),
                     TransportEvent::Error(err) => println!("Transport error {}", err),
-                    TransportEvent::Message(payload) => {
-                        match self.handle_message(payload, &mut ports).await {
-                            Ok(_) => println!("Transport message handled!"),
-                            Err(e) => println!("Failed to handle message: {:?}", e),
-                        }
-                    }
+                    TransportEvent::Message(payload) => match self.handle_message(payload).await {
+                        Ok(_) => println!("Transport message handled!"),
+                        Err(e) => println!("Failed to handle message: {:?}", e),
+                    },
                     TransportEvent::Close => {
                         println!("Transport closed");
                         break;
@@ -108,13 +108,7 @@ impl RpcServer {
     ///
     /// * `message_identifier` - A 32-bit unsigned number created by `build_message_identifier` in `protocol/parse.rs`
     /// * `payload` - Slice of bytes containing the request payload encoded with protobuf
-    /// * `ports` - ports registered in the `RpcServer`
-    async fn handle_request(
-        &self,
-        message_identifier: u32,
-        payload: &[u8],
-        ports: &mut HashMap<u32, RpcServerPort>,
-    ) -> ServerResult<()> {
+    async fn handle_request(&self, message_identifier: u32, payload: &[u8]) -> ServerResult<()> {
         let transport = self
             .transport
             .as_ref()
@@ -122,7 +116,7 @@ impl RpcServer {
         let request = Request::parse_from_bytes(payload).map_err(|_| ServerError::ProtocolError)?;
         println!("Request {:?}", request);
 
-        match ports.get(&request.port_id) {
+        match self.ports.get(&request.port_id) {
             Some(port) => {
                 let procedure_response =
                     port.call_procedure(request.procedure_id, request.payload)?;
@@ -153,12 +147,10 @@ impl RpcServer {
     ///
     /// * `message_identifier` - A 32-bit unsigned number created by `build_message_identifier` in `protocol/parse.rs`
     /// * `payload` - Slice of bytes containing the request payload encoded with protobuf
-    /// * `ports` - ports registered in the `RpcServer`
     async fn handle_request_module(
-        &self,
+        &mut self,
         message_identifier: u32,
         payload: &[u8],
-        ports: &mut HashMap<u32, RpcServerPort>,
     ) -> ServerResult<()> {
         let transport = self
             .transport
@@ -167,7 +159,7 @@ impl RpcServer {
         let request_module =
             RequestModule::parse_from_bytes(payload).map_err(|_| ServerError::ProtocolError)?;
         println!("> REQUEST_MODULE > request: {:?}", request_module);
-        if let Some(port) = ports.get_mut(&request_module.port_id) {
+        if let Some(port) = self.ports.get_mut(&request_module.port_id) {
             if let Ok(server_module_declaration) = port.load_module(request_module.module_name) {
                 let mut response = RequestModuleResponse::default();
                 response.set_port_id(request_module.port_id);
@@ -205,18 +197,16 @@ impl RpcServer {
     ///
     /// * `message_identifier` - A 32-bit unsigned number created by `build_message_identifier` in `protocol/parse.rs`
     /// * `payload` - Slice of bytes containing the request payload encoded with protobuf
-    /// * `ports` - ports registered in the `RpcServer`
     async fn handle_create_port(
-        &self,
+        &mut self,
         message_identifier: u32,
         payload: &[u8],
-        ports: &mut HashMap<u32, RpcServerPort>,
     ) -> ServerResult<()> {
         let transport = self
             .transport
             .as_ref()
             .ok_or(ServerError::TransportNotAttached)?;
-        let port_id = (ports.len() + 1) as u32;
+        let port_id = (self.ports.len() + 1) as u32;
         let create_port =
             CreatePort::parse_from_bytes(payload).map_err(|_| ServerError::ProtocolError)?;
         println!("CreatePort {:?}", create_port);
@@ -227,7 +217,7 @@ impl RpcServer {
             handler(&mut port);
         }
 
-        ports.insert(port_id, port);
+        self.ports.insert(port_id, port);
 
         let mut response = CreatePortResponse::new();
         response.message_identifier = message_identifier;
@@ -248,18 +238,13 @@ impl RpcServer {
     /// # Arguments
     ///
     /// * `payload` - Slice of bytes containing the request payload encoded with protobuf
-    /// * `ports` - ports registered in the `RpcServer`
-    fn handle_destroy_port(
-        &self,
-        payload: &[u8],
-        ports: &mut HashMap<u32, RpcServerPort>,
-    ) -> ServerResult<()> {
+    fn handle_destroy_port(&mut self, payload: &[u8]) -> ServerResult<()> {
         let destroy_port =
             DestroyPort::parse_from_bytes(payload).map_err(|_| ServerError::ProtocolError)?;
 
         println!("DestroyPort {:?}", destroy_port);
 
-        ports.remove(&destroy_port.port_id);
+        self.ports.remove(&destroy_port.port_id);
         Ok(())
     }
 
@@ -272,31 +257,23 @@ impl RpcServer {
     /// # Arguments
     ///
     /// * `payload` - Vec of bytes containing the request payload encoded with protobuf
-    /// * `ports` - ports registered in the `RpcServer`
-    async fn handle_message(
-        &self,
-        payload: Vec<u8>,
-        ports: &mut HashMap<u32, RpcServerPort>,
-    ) -> ServerResult<()> {
+    async fn handle_message(&mut self, payload: Vec<u8>) -> ServerResult<()> {
         let (message_type, message_identifier) =
             parse_header(&payload).ok_or(ServerError::ProtocolError)?;
 
         match message_type {
             RpcMessageTypes::RpcMessageTypes_REQUEST => {
-                self.handle_request(message_identifier, &payload, ports)
-                    .await?
+                self.handle_request(message_identifier, &payload).await?
             }
             RpcMessageTypes::RpcMessageTypes_REQUEST_MODULE => {
-                self.handle_request_module(message_identifier, &payload, ports)
+                self.handle_request_module(message_identifier, &payload)
                     .await?
             }
             RpcMessageTypes::RpcMessageTypes_CREATE_PORT => {
-                self.handle_create_port(message_identifier, &payload, ports)
+                self.handle_create_port(message_identifier, &payload)
                     .await?
             }
-            RpcMessageTypes::RpcMessageTypes_DESTROY_PORT => {
-                self.handle_destroy_port(&payload, ports)?
-            }
+            RpcMessageTypes::RpcMessageTypes_DESTROY_PORT => self.handle_destroy_port(&payload)?,
             RpcMessageTypes::RpcMessageTypes_STREAM_ACK
             | RpcMessageTypes::RpcMessageTypes_STREAM_MESSAGE => {
                 // noops
