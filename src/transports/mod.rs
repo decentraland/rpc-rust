@@ -13,7 +13,7 @@ pub enum TransportEvent {
     ///
     Connect,
     /// the on_message callback is called when the transport receives a message
-    Message { data: Vec<u8> },
+    Message(Vec<u8>),
     /// the error event is emited when the transport triggers an error
     Error(String),
     /// the close function will be called when it is decided to end the communication
@@ -32,4 +32,3 @@ pub trait Transport {
     async fn send(&self, message: Vec<u8>) -> Result<(), TransportError>;
     fn close(&mut self);
 }
-

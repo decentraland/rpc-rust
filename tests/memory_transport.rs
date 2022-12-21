@@ -11,15 +11,15 @@ async fn ping_pong() {
     let _ = client.send(input.clone()).await;
 
     let message = server.receive().await.expect("can receive");
-    assert!(matches!(message, TransportEvent::Message { data: _ }));
-    if let TransportEvent::Message { data } = message {
+    assert!(matches!(message, TransportEvent::Message(_)));
+    if let TransportEvent::Message(data) = message {
         assert_eq!(&data, &input);
         let _ = server.send(data).await;
     }
 
     let message = client.receive().await.expect("can receive");
-    assert!(matches!(message, TransportEvent::Message { data: _ }));
-    if let TransportEvent::Message { data } = message {
+    assert!(matches!(message, TransportEvent::Message(_)));
+    if let TransportEvent::Message(data) = message {
         assert_eq!(&data, &input);
     }
 

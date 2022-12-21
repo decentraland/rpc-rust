@@ -5,12 +5,25 @@ use super::index::{
     RequestModuleResponse, Response, RpcMessageHeader, RpcMessageTypes, StreamMessage,
 };
 
+/// Build message identifier from type and number, and returns one number which it's the `message_identifier`
+///
+/// `message_identifier` packs two numbers:
+///
+/// Bits from 1 to 28 correspond to the sequential message id (analogous to JSON-RPC 2)
+///
+/// Bits from 28 to 32 correspond to message_type
+pub fn build_message_identifier(message_type: u32, message_number: u32) -> u32 {
+    ((message_type & 0xf) << 27) | (message_number & 0x07ffffff)
+}
+
 /// Parse message type and number from message identifier
+///
+/// Do the inverse calculation of `build_message_identifier`
 pub fn parse_message_identifier(value: u32) -> (u32, u32) {
     ((value >> 27) & 0xf, value & 0x07ffffff)
 }
 
-// Parse data to message type and message identifier
+/// Parse `data` to message type and message identifier
 pub fn parse_header(data: &[u8]) -> Option<(RpcMessageTypes, u32)> {
     let message_header = RpcMessageHeader::parse_from_bytes(data).ok()?;
     let (message_type, message_number) =
