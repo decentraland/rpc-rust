@@ -39,18 +39,18 @@ pub enum ServerError {
 ///
 /// Once a RpcServer is inited, you should attach a transport and handler
 /// for the port creation.
-pub struct RpcServer<CTX> {
+pub struct RpcServer<Context> {
     /// The Transport used for the communicatio between `RpcClient` and `RpcServer`
     transport: Option<Box<dyn Transport + Send + Sync>>,
     /// The handler executed when a new port is created
-    handler: Option<Box<PortHandlerFn<CTX>>>,
+    handler: Option<Box<PortHandlerFn<Context>>>,
     /// Ports registered in the `RpcServer`
-    ports: HashMap<u32, RpcServerPort<CTX>>,
+    ports: HashMap<u32, RpcServerPort<Context>>,
     /// RpcServer Context
-    context: CTX,
+    context: Context,
 }
-impl<CTX> RpcServer<CTX> {
-    pub fn create(ctx: CTX) -> Self {
+impl<Context> RpcServer<Context> {
+    pub fn create(ctx: Context) -> Self {
         Self {
             transport: None,
             handler: None,
@@ -100,7 +100,7 @@ impl<CTX> RpcServer<CTX> {
     /// for the port.
     pub fn set_handler<H>(&mut self, handler: H)
     where
-        H: Fn(&mut RpcServerPort<CTX>) + Send + Sync + 'static,
+        H: Fn(&mut RpcServerPort<Context>) + Send + Sync + 'static,
     {
         self.handler = Some(Box::new(handler));
     }
@@ -291,22 +291,22 @@ impl<CTX> RpcServer<CTX> {
 }
 
 /// RpcServerPort is what a RpcServer contains to handle different services/modules
-pub struct RpcServerPort<CTX> {
+pub struct RpcServerPort<Context> {
     /// RpcServer name
     pub name: String,
     /// Registered modules contains the name and module/service definition
     ///
     /// A module can be registered but not loaded
-    registered_modules: HashMap<String, ServiceModuleDefinition<CTX>>,
+    registered_modules: HashMap<String, ServiceModuleDefinition<Context>>,
     /// Loaded modules contains the name and a collection of procedures with id and the name for each one
     ///
     /// A module is loaded when the client requests to.
     loaded_modules: HashMap<String, ServerModuleDeclaration>,
     /// Procedures contains the id and the handler for each procedure
-    procedures: HashMap<u32, Arc<Box<UnaryRequestHandler<CTX>>>>,
+    procedures: HashMap<u32, Arc<Box<UnaryRequestHandler<Context>>>>,
 }
 
-impl<CTX> RpcServerPort<CTX> {
+impl<Context> RpcServerPort<Context> {
     pub fn new(name: String) -> Self {
         RpcServerPort {
             name,
@@ -320,7 +320,7 @@ impl<CTX> RpcServerPort<CTX> {
     pub fn register_module(
         &mut self,
         module_name: String,
-        service_definition: ServiceModuleDefinition<CTX>,
+        service_definition: ServiceModuleDefinition<Context>,
     ) {
         self.registered_modules
             .insert(module_name, service_definition);
@@ -376,10 +376,10 @@ impl<CTX> RpcServerPort<CTX> {
         &self,
         procedure_id: u32,
         payload: Vec<u8>,
-        ctx: &CTX,
+        context: &Context,
     ) -> ServerResult<Vec<u8>> {
         match self.procedures.get(&procedure_id) {
-            Some(procedure_handler) => Ok(procedure_handler(&payload, ctx)),
+            Some(procedure_handler) => Ok(procedure_handler(&payload, context)),
             _ => Err(ServerError::ProcedureError),
         }
     }
