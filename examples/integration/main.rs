@@ -17,6 +17,18 @@ use rpc_rust::{
 
 use service::{api, book_service};
 
+use crate::service::api::GetBookRequest;
+
+pub struct BookRecord {
+    pub author: String,
+    pub title: String,
+    pub isbn: i64,
+}
+
+pub struct MyExampleContext {
+    pub hardcoded_database: Vec<BookRecord>,
+}
+
 #[tokio::main]
 async fn main() {
     // Rebuild proto when run it
@@ -87,11 +99,14 @@ async fn main() {
                 }
             }
 
+            let mut get_book_payload = GetBookRequest::default();
+            get_book_payload.set_isbn(1000);
+
             let call_procedure = Request {
                 port_id: 1,
                 message_identifier: build_message_identifier(1, 3),
                 procedure_id: 1,
-                payload: Vec::new(),
+                payload: get_book_payload.write_to_bytes().unwrap(),
                 ..Default::default()
             };
 
@@ -122,10 +137,18 @@ async fn main() {
         });
 
         scope.spawn(async {
+            let ctx = MyExampleContext {
+                hardcoded_database: vec![BookRecord {
+                    author: "mr steve".to_string(),
+                    title: "Rust advanced".to_string(),
+                    isbn: 1000,
+                }],
+            };
+
             // 2- Create Server with Transport
-            let mut server = RpcServer::create();
+            let mut server = RpcServer::create(ctx);
             // 3- Server listen to Create Port request
-            server.set_handler(|port: &mut RpcServerPort| {
+            server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
                 println!("Port {} created!", port.name);
                 codegen::BookServiceCodeGen::register_service(port, book_service::BookService {})
             });
