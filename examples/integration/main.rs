@@ -138,11 +138,18 @@ async fn main() {
 
         scope.spawn(async {
             let ctx = MyExampleContext {
-                hardcoded_database: vec![BookRecord {
-                    author: "mr steve".to_string(),
-                    title: "Rust advanced".to_string(),
-                    isbn: 1000,
-                }],
+                hardcoded_database: vec![
+                    BookRecord {
+                        author: "mr steve".to_string(),
+                        title: "Rust: crash course".to_string(),
+                        isbn: 1000,
+                    },
+                    BookRecord {
+                        author: "mr steve".to_string(),
+                        title: "Rust: how do futures work under the hood?".to_string(),
+                        isbn: 1001,
+                    },
+                ],
             };
 
             // 2- Create Server with Transport
