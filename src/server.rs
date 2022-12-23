@@ -17,7 +17,7 @@ use crate::{
     },
 };
 
-type PortHandlerFn<CTX> = dyn Fn(&mut RpcServerPort<CTX>) + Send + Sync + 'static;
+type PortHandlerFn<Context> = dyn Fn(&mut RpcServerPort<Context>) + Send + Sync + 'static;
 
 pub type ServerResult<T> = Result<T, ServerError>;
 
