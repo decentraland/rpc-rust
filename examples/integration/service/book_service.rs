@@ -17,16 +17,6 @@ impl BookServiceInterface for BookService {
             .iter()
             .find(|book_record| book_record.isbn == request.isbn);
 
-        let mut final_book = Book::default();
-
-        if book.is_some() {
-            let b = book.unwrap();
-            final_book.set_author(b.author.clone());
-            final_book.set_isbn(b.isbn.clone());
-            final_book.set_title(b.title.clone());
-            return final_book;
-        }
-
-        final_book
+        book.map(Book::clone).unwrap_or_default()
     }
 }
