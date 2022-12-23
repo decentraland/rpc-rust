@@ -15,18 +15,29 @@ use rpc_rust::{
     transports::{self, Transport, TransportEvent},
 };
 
-use service::{api, book_service};
+use service::{
+    api::{self, Book},
+    book_service,
+};
 
 use crate::service::api::GetBookRequest;
 
-pub struct BookRecord {
-    pub author: String,
-    pub title: String,
-    pub isbn: i64,
+pub struct MyExampleContext {
+    pub hardcoded_database: Vec<Book>,
 }
 
-pub struct MyExampleContext {
-    pub hardcoded_database: Vec<BookRecord>,
+fn create_db() -> Vec<Book> {
+    let mut book_1 = Book::default();
+    book_1.set_author("mr steve".to_string());
+    book_1.set_title("Rust: crash course".to_string());
+    book_1.set_isbn(1000);
+
+    let mut book_2 = Book::default();
+    book_2.set_author("mr jobs".to_string());
+    book_2.set_title("Rust: how do futures work under the hood?".to_string());
+    book_2.set_isbn(1001);
+
+    vec![book_1, book_2]
 }
 
 #[tokio::main]
@@ -138,18 +149,7 @@ async fn main() {
 
         scope.spawn(async {
             let ctx = MyExampleContext {
-                hardcoded_database: vec![
-                    BookRecord {
-                        author: "mr steve".to_string(),
-                        title: "Rust: crash course".to_string(),
-                        isbn: 1000,
-                    },
-                    BookRecord {
-                        author: "mr steve".to_string(),
-                        title: "Rust: how do futures work under the hood?".to_string(),
-                        isbn: 1001,
-                    },
-                ],
+                hardcoded_database: create_db(),
             };
 
             // 2- Create Server with Transport
