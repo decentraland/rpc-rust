@@ -9,7 +9,7 @@ use super::api::Book;
 pub struct BookService {}
 
 #[async_trait::async_trait]
-impl BookServiceInterface for BookService {
+impl BookServiceInterface<MyExampleContext> for BookService {
     async fn get_book(
         &self,
         request: super::api::GetBookRequest,

@@ -3,23 +3,23 @@ use std::sync::Arc;
 use protobuf::Message;
 use rpc_rust::{server::RpcServerPort, types::ServiceModuleDefinition};
 
-use crate::{
-    service::api::{Book, GetBookRequest},
-    MyExampleContext,
-};
+use crate::service::api::{Book, GetBookRequest};
 
 pub const SERVICE: &str = "BookService";
 
 #[async_trait::async_trait]
-pub trait BookServiceInterface {
-    async fn get_book(&self, request: GetBookRequest, context: Arc<MyExampleContext>) -> Book;
+pub trait BookServiceInterface<Context> {
+    async fn get_book(&self, request: GetBookRequest, context: Arc<Context>) -> Book;
 }
 
 pub struct BookServiceCodeGen {}
 
 impl BookServiceCodeGen {
-    pub fn register_service<S: BookServiceInterface + Send + Sync + 'static>(
-        port: &mut RpcServerPort<MyExampleContext>,
+    pub fn register_service<
+        S: BookServiceInterface<Context> + Send + Sync + 'static,
+        Context: Send + Sync + 'static,
+    >(
+        port: &mut RpcServerPort<Context>,
         service: S,
     ) {
         println!("> BookServiceCodeGen > register_service");
