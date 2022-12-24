@@ -10,7 +10,7 @@ impl BookServiceInterface for BookService {
         request: super::api::GetBookRequest,
         ctx: &MyExampleContext,
     ) -> super::api::Book {
-        assert_eq!(ctx.hardcoded_database.len(), 1);
+        assert_eq!(ctx.hardcoded_database.len(), 2);
 
         let book = ctx
             .hardcoded_database
