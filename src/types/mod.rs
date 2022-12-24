@@ -4,7 +4,6 @@ use std::{collections::HashMap, pin::Pin, sync::Arc};
 pub type UnaryRequestHandler<Context> =
     dyn Fn(Vec<u8>, Arc<Context>) -> Pin<Box<dyn Future<Output = Vec<u8>> + Send>> + Send + Sync;
 
-#[derive(Default)]
 pub struct ServiceModuleDefinition<Context> {
     definitions: HashMap<String, Arc<UnaryRequestHandler<Context>>>,
 }
