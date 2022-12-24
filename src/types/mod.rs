@@ -2,7 +2,7 @@ use core::future::Future;
 use std::{collections::HashMap, pin::Pin, sync::Arc};
 
 pub type UnaryRequestHandler<Context> =
-    dyn Fn(&[u8], Arc<Context>) -> Pin<Box<dyn Future<Output = Vec<u8>> + Send>> + Send + Sync;
+    dyn Fn(Vec<u8>, Arc<Context>) -> Pin<Box<dyn Future<Output = Vec<u8>> + Send>> + Send + Sync;
 
 #[derive(Default)]
 pub struct ServiceModuleDefinition<Context> {
@@ -17,7 +17,7 @@ impl<Context> ServiceModuleDefinition<Context> {
     }
 
     pub fn add_definition<
-        H: Fn(&[u8], Arc<Context>) -> Pin<Box<dyn Future<Output = Vec<u8>> + Send>>
+        H: Fn(Vec<u8>, Arc<Context>) -> Pin<Box<dyn Future<Output = Vec<u8>> + Send>>
             + Send
             + Sync
             + 'static,

@@ -381,7 +381,7 @@ impl<Context> RpcServerPort<Context> {
         context: Arc<Context>,
     ) -> ServerResult<Vec<u8>> {
         match self.procedures.get(&procedure_id) {
-            Some(procedure_handler) => Ok(procedure_handler(&payload, context).await),
+            Some(procedure_handler) => Ok(procedure_handler(payload, context).await),
             _ => Err(ServerError::ProcedureError),
         }
     }

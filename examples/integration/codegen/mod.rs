@@ -28,11 +28,10 @@ impl BookServiceCodeGen {
         // Share service ownership
         let service = Arc::new(service);
         service_def.add_definition("GetBook".to_string(), move |request, context| {
-            let req = Vec::from(request);
             let serv = service.clone();
             Box::pin(async move {
                 let res = serv
-                    .get_book(GetBookRequest::parse_from_bytes(&req).unwrap(), context)
+                    .get_book(GetBookRequest::parse_from_bytes(&request).unwrap(), context)
                     .await;
                 println!("> Service Definition > Get Book > response: {:?}", res);
                 res.write_to_bytes().unwrap()
