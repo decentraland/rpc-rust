@@ -121,8 +121,9 @@ impl<Context> RpcServer<Context> {
 
         match self.ports.get(&request.port_id) {
             Some(port) => {
-                let procedure_response =
-                    port.call_procedure(request.procedure_id, request.payload, &self.context)?;
+                let procedure_response = port
+                    .call_procedure(request.procedure_id, request.payload, &self.context)
+                    .await?;
 
                 let response = Response {
                     message_identifier,
@@ -303,7 +304,7 @@ pub struct RpcServerPort<Context> {
     /// A module is loaded when the client requests to.
     loaded_modules: HashMap<String, ServerModuleDeclaration>,
     /// Procedures contains the id and the handler for each procedure
-    procedures: HashMap<u32, Arc<Box<UnaryRequestHandler<Context>>>>,
+    procedures: HashMap<u32, Arc<UnaryRequestHandler<Context>>>,
 }
 
 impl<Context> RpcServerPort<Context> {
@@ -372,14 +373,14 @@ impl<Context> RpcServerPort<Context> {
     }
 
     /// It will look up the procedure id in the port's `procedures` and execute the procedure's handler
-    pub fn call_procedure(
+    pub async fn call_procedure(
         &self,
         procedure_id: u32,
         payload: Vec<u8>,
         context: &Context,
     ) -> ServerResult<Vec<u8>> {
         match self.procedures.get(&procedure_id) {
-            Some(procedure_handler) => Ok(procedure_handler(&payload, context)),
+            Some(procedure_handler) => Ok(procedure_handler(&payload, context).await),
             _ => Err(ServerError::ProcedureError),
         }
     }
