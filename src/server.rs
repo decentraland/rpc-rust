@@ -47,7 +47,7 @@ pub struct RpcServer<Context> {
     /// Ports registered in the `RpcServer`
     ports: HashMap<u32, RpcServerPort<Context>>,
     /// RpcServer Context
-    context: Context,
+    context: Arc<Context>,
 }
 impl<Context> RpcServer<Context> {
     pub fn create(ctx: Context) -> Self {
@@ -55,7 +55,7 @@ impl<Context> RpcServer<Context> {
             transport: None,
             handler: None,
             ports: HashMap::new(),
-            context: ctx,
+            context: Arc::new(ctx),
         }
     }
 
@@ -121,8 +121,9 @@ impl<Context> RpcServer<Context> {
 
         match self.ports.get(&request.port_id) {
             Some(port) => {
+                let procedure_ctx = self.context.clone();
                 let procedure_response = port
-                    .call_procedure(request.procedure_id, request.payload, &self.context)
+                    .call_procedure(request.procedure_id, request.payload, procedure_ctx)
                     .await?;
 
                 let response = Response {
@@ -377,7 +378,7 @@ impl<Context> RpcServerPort<Context> {
         &self,
         procedure_id: u32,
         payload: Vec<u8>,
-        context: &Context,
+        context: Arc<Context>,
     ) -> ServerResult<Vec<u8>> {
         match self.procedures.get(&procedure_id) {
             Some(procedure_handler) => Ok(procedure_handler(&payload, context).await),
