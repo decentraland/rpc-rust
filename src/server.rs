@@ -374,7 +374,7 @@ impl<Context> RpcServerPort<Context> {
     }
 
     /// It will look up the procedure id in the port's `procedures` and execute the procedure's handler
-    pub async fn call_procedure(
+    async fn call_procedure(
         &self,
         procedure_id: u32,
         payload: Vec<u8>,
