@@ -1,3 +1,4 @@
+// THIS CODE SHOULD BE AUTO-GENERATED
 use std::sync::Arc;
 
 use protobuf::Message;
