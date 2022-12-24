@@ -309,7 +309,7 @@ pub struct RpcServerPort<Context> {
 }
 
 impl<Context> RpcServerPort<Context> {
-    pub fn new(name: String) -> Self {
+    fn new(name: String) -> Self {
         RpcServerPort {
             name,
             registered_modules: HashMap::new(),
