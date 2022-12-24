@@ -1,15 +1,22 @@
-use crate::codegen::BookServiceInterface;
+use crate::{codegen::BookServiceInterface, MyExampleContext};
 
 use super::api::Book;
 
 pub struct BookService {}
 
 impl BookServiceInterface for BookService {
-    fn get_book(&self, _request: super::api::GetBookRequest) -> super::api::Book {
-        let mut book = Book::default();
-        book.set_author("YO".to_string());
-        book.set_isbn(100);
-        book.set_title("CS".to_string());
-        book
+    fn get_book(
+        &self,
+        request: super::api::GetBookRequest,
+        ctx: &MyExampleContext,
+    ) -> super::api::Book {
+        assert_eq!(ctx.hardcoded_database.len(), 1);
+
+        let book = ctx
+            .hardcoded_database
+            .iter()
+            .find(|book_record| book_record.isbn == request.isbn);
+
+        book.map(Book::clone).unwrap_or_default()
     }
 }

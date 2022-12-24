@@ -17,7 +17,7 @@ use crate::{
     },
 };
 
-type PortHandlerFn = dyn Fn(&mut RpcServerPort) + Send + Sync + 'static;
+type PortHandlerFn<Context> = dyn Fn(&mut RpcServerPort<Context>) + Send + Sync + 'static;
 
 pub type ServerResult<T> = Result<T, ServerError>;
 
@@ -39,20 +39,23 @@ pub enum ServerError {
 ///
 /// Once a RpcServer is inited, you should attach a transport and handler
 /// for the port creation.
-pub struct RpcServer {
+pub struct RpcServer<Context> {
     /// The Transport used for the communicatio between `RpcClient` and `RpcServer`
     transport: Option<Box<dyn Transport + Send + Sync>>,
     /// The handler executed when a new port is created
-    handler: Option<Box<PortHandlerFn>>,
+    handler: Option<Box<PortHandlerFn<Context>>>,
     /// Ports registered in the `RpcServer`
-    ports: HashMap<u32, RpcServerPort>,
+    ports: HashMap<u32, RpcServerPort<Context>>,
+    /// RpcServer Context
+    context: Context,
 }
-impl RpcServer {
-    pub fn create() -> Self {
+impl<Context> RpcServer<Context> {
+    pub fn create(ctx: Context) -> Self {
         Self {
             transport: None,
             handler: None,
             ports: HashMap::new(),
+            context: ctx,
         }
     }
 
@@ -97,7 +100,7 @@ impl RpcServer {
     /// for the port.
     pub fn set_handler<H>(&mut self, handler: H)
     where
-        H: Fn(&mut RpcServerPort) + Send + Sync + 'static,
+        H: Fn(&mut RpcServerPort<Context>) + Send + Sync + 'static,
     {
         self.handler = Some(Box::new(handler));
     }
@@ -119,7 +122,7 @@ impl RpcServer {
         match self.ports.get(&request.port_id) {
             Some(port) => {
                 let procedure_response =
-                    port.call_procedure(request.procedure_id, request.payload)?;
+                    port.call_procedure(request.procedure_id, request.payload, &self.context)?;
 
                 let response = Response {
                     message_identifier,
@@ -288,22 +291,22 @@ impl RpcServer {
 }
 
 /// RpcServerPort is what a RpcServer contains to handle different services/modules
-pub struct RpcServerPort {
+pub struct RpcServerPort<Context> {
     /// RpcServer name
     pub name: String,
     /// Registered modules contains the name and module/service definition
     ///
     /// A module can be registered but not loaded
-    registered_modules: HashMap<String, ServiceModuleDefinition>,
+    registered_modules: HashMap<String, ServiceModuleDefinition<Context>>,
     /// Loaded modules contains the name and a collection of procedures with id and the name for each one
     ///
     /// A module is loaded when the client requests to.
     loaded_modules: HashMap<String, ServerModuleDeclaration>,
     /// Procedures contains the id and the handler for each procedure
-    procedures: HashMap<u32, Arc<Box<UnaryRequestHandler>>>,
+    procedures: HashMap<u32, Arc<Box<UnaryRequestHandler<Context>>>>,
 }
 
-impl RpcServerPort {
+impl<Context> RpcServerPort<Context> {
     pub fn new(name: String) -> Self {
         RpcServerPort {
             name,
@@ -317,7 +320,7 @@ impl RpcServerPort {
     pub fn register_module(
         &mut self,
         module_name: String,
-        service_definition: ServiceModuleDefinition,
+        service_definition: ServiceModuleDefinition<Context>,
     ) {
         self.registered_modules
             .insert(module_name, service_definition);
@@ -369,9 +372,14 @@ impl RpcServerPort {
     }
 
     /// It will look up the procedure id in the port's `procedures` and execute the procedure's handler
-    pub fn call_procedure(&self, procedure_id: u32, payload: Vec<u8>) -> ServerResult<Vec<u8>> {
+    pub fn call_procedure(
+        &self,
+        procedure_id: u32,
+        payload: Vec<u8>,
+        context: &Context,
+    ) -> ServerResult<Vec<u8>> {
         match self.procedures.get(&procedure_id) {
-            Some(procedure_handler) => Ok(procedure_handler(&payload)),
+            Some(procedure_handler) => Ok(procedure_handler(&payload, context)),
             _ => Err(ServerError::ProcedureError),
         }
     }
