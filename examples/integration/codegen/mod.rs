@@ -27,8 +27,10 @@ impl BookServiceCodeGen {
         let mut service_def = ServiceModuleDefinition::new();
         // Share service ownership
         let service = Arc::new(service);
+        // Clone it for "GetBook" procedure
+        let serv = Arc::clone(&service);
         service_def.add_definition("GetBook".to_string(), move |request, context| {
-            let serv = service.clone();
+            let serv = serv.clone();
             Box::pin(async move {
                 let res = serv
                     .get_book(GetBookRequest::parse_from_bytes(&request).unwrap(), context)
