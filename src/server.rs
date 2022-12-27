@@ -47,7 +47,7 @@ pub struct RpcServer<Context> {
     /// Ports registered in the `RpcServer`
     ports: HashMap<u32, RpcServerPort<Context>>,
     /// RpcServer Context
-    context: Context,
+    context: Arc<Context>,
 }
 impl<Context> RpcServer<Context> {
     pub fn create(ctx: Context) -> Self {
@@ -55,7 +55,7 @@ impl<Context> RpcServer<Context> {
             transport: None,
             handler: None,
             ports: HashMap::new(),
-            context: ctx,
+            context: Arc::new(ctx),
         }
     }
 
@@ -121,8 +121,10 @@ impl<Context> RpcServer<Context> {
 
         match self.ports.get(&request.port_id) {
             Some(port) => {
-                let procedure_response =
-                    port.call_procedure(request.procedure_id, request.payload, &self.context)?;
+                let procedure_ctx = self.context.clone();
+                let procedure_response = port
+                    .call_procedure(request.procedure_id, request.payload, procedure_ctx)
+                    .await?;
 
                 let response = Response {
                     message_identifier,
@@ -303,11 +305,11 @@ pub struct RpcServerPort<Context> {
     /// A module is loaded when the client requests to.
     loaded_modules: HashMap<String, ServerModuleDeclaration>,
     /// Procedures contains the id and the handler for each procedure
-    procedures: HashMap<u32, Arc<Box<UnaryRequestHandler<Context>>>>,
+    procedures: HashMap<u32, Arc<UnaryRequestHandler<Context>>>,
 }
 
 impl<Context> RpcServerPort<Context> {
-    pub fn new(name: String) -> Self {
+    fn new(name: String) -> Self {
         RpcServerPort {
             name,
             registered_modules: HashMap::new(),
@@ -372,14 +374,14 @@ impl<Context> RpcServerPort<Context> {
     }
 
     /// It will look up the procedure id in the port's `procedures` and execute the procedure's handler
-    pub fn call_procedure(
+    async fn call_procedure(
         &self,
         procedure_id: u32,
         payload: Vec<u8>,
-        context: &Context,
+        context: Arc<Context>,
     ) -> ServerResult<Vec<u8>> {
         match self.procedures.get(&procedure_id) {
-            Some(procedure_handler) => Ok(procedure_handler(&payload, context)),
+            Some(procedure_handler) => Ok(procedure_handler(payload, context).await),
             _ => Err(ServerError::ProcedureError),
         }
     }

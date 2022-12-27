@@ -16,7 +16,6 @@ async-trait = "0.1.57"
 protoc-rust = "2.27.1"
 
 [dev-dependencies]
-async-scoped = { version = "0.7.1", features = ["use-tokio", "tokio"]}
 protoc-rust = "2.27.1"
 
 

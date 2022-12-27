@@ -1,10 +1,11 @@
-use std::{collections::HashMap, sync::Arc};
+use core::future::Future;
+use std::{collections::HashMap, pin::Pin, sync::Arc};
 
-pub type UnaryRequestHandler<Context> = dyn Fn(&[u8], &Context) -> Vec<u8> + Send + Sync;
+pub type UnaryRequestHandler<Context> =
+    dyn Fn(Vec<u8>, Arc<Context>) -> Pin<Box<dyn Future<Output = Vec<u8>> + Send>> + Send + Sync;
 
-#[derive(Default)]
 pub struct ServiceModuleDefinition<Context> {
-    definitions: HashMap<String, Arc<Box<UnaryRequestHandler<Context>>>>,
+    definitions: HashMap<String, Arc<UnaryRequestHandler<Context>>>,
 }
 
 impl<Context> ServiceModuleDefinition<Context> {
@@ -14,15 +15,20 @@ impl<Context> ServiceModuleDefinition<Context> {
         }
     }
 
-    pub fn add_definition<H: Fn(&[u8], &Context) -> Vec<u8> + Send + Sync + 'static>(
+    pub fn add_definition<
+        H: Fn(Vec<u8>, Arc<Context>) -> Pin<Box<dyn Future<Output = Vec<u8>> + Send>>
+            + Send
+            + Sync
+            + 'static,
+    >(
         &mut self,
         name: String,
         handler: H,
     ) {
-        self.definitions.insert(name, Arc::new(Box::new(handler)));
+        self.definitions.insert(name, Arc::new(handler));
     }
 
-    pub fn get_definitions(&self) -> &HashMap<String, Arc<Box<UnaryRequestHandler<Context>>>> {
+    pub fn get_definitions(&self) -> &HashMap<String, Arc<UnaryRequestHandler<Context>>> {
         &self.definitions
     }
 }
