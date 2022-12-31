@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use futures_util::TryFutureExt;
 use protobuf::Message;
-use tokio::sync::RwLock;
+use tokio::sync::Mutex;
 
 use crate::{
     protocol::{
@@ -204,14 +204,14 @@ impl RpcClientModule {
 }
 
 struct ClientRequestDispatcher {
-    next_message_id: RwLock<u32>,
+    next_message_id: Mutex<u32>,
     transport: Arc<dyn Transport + Send + Sync>,
 }
 
 impl ClientRequestDispatcher {
     pub fn new(transport: Arc<dyn Transport + Send + Sync>) -> Self {
         Self {
-            next_message_id: RwLock::new(1),
+            next_message_id: Mutex::new(1),
             transport,
         }
     }
@@ -220,11 +220,13 @@ impl ClientRequestDispatcher {
         &self,
         cb: Callback,
     ) -> ClientResult<(u32, u32, ReturnType)> {
-        let message_id = {
-            let message_id = self.next_message_id.read().await;
-            *message_id
-        };
+        let mut message_lock = self.next_message_id.lock().await;
+        let message_id = *message_lock;
+        println!("Message ID: {}", message_id);
         let payload = cb(message_id);
+        // store next_message_id
+        *message_lock += 1;
+        drop(message_lock); // Force to drop the mutex for other conccurrent operations
 
         let payload = payload
             .write_to_bytes()
@@ -242,9 +244,6 @@ impl ClientRequestDispatcher {
             .map_err(|_| ClientError::TransportError)?;
 
         if let TransportEvent::Message(data) = response {
-            let mut next_message_id = self.next_message_id.write().await;
-            *next_message_id += 1;
-
             match parse_protocol_message::<ReturnType>(&data) {
                 Some(result) => Ok(result),
                 None => Err(ClientError::ProtocolError),
