@@ -220,13 +220,15 @@ impl ClientRequestDispatcher {
         &self,
         cb: Callback,
     ) -> ClientResult<(u32, u32, ReturnType)> {
-        let mut message_lock = self.next_message_id.lock().await;
-        let message_id = *message_lock;
-        println!("Message ID: {}", message_id);
-        let payload = cb(message_id);
-        // store next_message_id
-        *message_lock += 1;
-        drop(message_lock); // Force to drop the mutex for other conccurrent operations
+        let payload = {
+            let mut message_lock = self.next_message_id.lock().await;
+            let message_id = *message_lock;
+            println!("Message ID: {}", message_id);
+            let payload = cb(message_id);
+            // store next_message_id
+            *message_lock += 1;
+            payload
+        }; // Force to drop the mutex for other conccurrent operations
 
         let payload = payload
             .write_to_bytes()
