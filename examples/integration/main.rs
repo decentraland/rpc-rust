@@ -3,22 +3,13 @@ extern crate protoc_rust;
 mod codegen;
 mod service;
 
-use protobuf::Message;
 use rpc_rust::{
-    protocol::{
-        index::{
-            CreatePort, CreatePortResponse, Request, RequestModule, RequestModuleResponse, Response,
-        },
-        parse::build_message_identifier,
-    },
+    client::RpcClient,
     server::{RpcServer, RpcServerPort},
-    transports::{self, Transport, TransportEvent},
+    transports,
 };
 
-use service::{
-    api::{self, Book},
-    book_service,
-};
+use service::{api::Book, book_service};
 
 use crate::service::api::GetBookRequest;
 
@@ -51,98 +42,42 @@ async fn main() {
         .expect("Running protoc failed.");
 
     // 1- Create Transport
-    let (mut client_transport, server_transport) = transports::memory::MemoryTransport::create();
+    let (client_transport, server_transport) = transports::memory::MemoryTransport::create();
 
     let client_handle = tokio::spawn(async move {
-        let connect_message = vec![0];
-        client_transport.send(connect_message).await.unwrap();
+        let mut client = RpcClient::new(client_transport).await.unwrap();
 
-        let create_port = CreatePort {
-            message_identifier: build_message_identifier(5, 1),
-            port_name: "testport".to_string(),
-            ..Default::default()
-        };
-
-        let _result = client_transport
-            .send(create_port.write_to_bytes().unwrap())
-            .await;
-
-        // Wait for the server response
-        let res = client_transport.receive().await.unwrap();
-        println!("> Create Port > Server Response Type: {:?}", res);
-        match res {
-            TransportEvent::Message(bytes) => {
-                let port_response = CreatePortResponse::parse_from_bytes(&bytes).unwrap();
-                println!("> Create Port > Server Response body: {:?}", port_response)
-            }
-            _ => {
-                println!("> Create Port > Server Response not message type")
-            }
-        }
-
-        let request_module = RequestModule {
-            port_id: 1,
-            message_identifier: build_message_identifier(7, 2),
-            module_name: "BookService".to_string(),
-            ..Default::default()
-        };
-
-        let _result = client_transport
-            .send(request_module.write_to_bytes().unwrap())
-            .await;
-
-        let res = client_transport.receive().await.unwrap();
-
-        println!("> Request Module > Server Response Type: {:?}", res);
-        match res {
-            TransportEvent::Message(bytes) => {
-                let request_module_response =
-                    RequestModuleResponse::parse_from_bytes(&bytes).unwrap();
+        let client_port = match client.create_port("TEST_PORT").await {
+            Ok(port) => {
                 println!(
-                    "> Request Module > Server Response body: {:?}",
-                    request_module_response
-                )
+                    "> Create Port > Created successfully > Port name: {}",
+                    port.port_name
+                );
+                port
             }
-            _ => {
-                println!("> Request Module > Server Response not message type")
+            Err(err) => {
+                println!("> Create Port > Error on creating the port: {:?}", err);
+                panic!()
             }
-        }
+        };
+
+        assert_eq!(client_port.port_name, "TEST_PORT");
+
+        let book_service_module = client_port.load_module("BookService").await.unwrap();
 
         let mut get_book_payload = GetBookRequest::default();
         get_book_payload.set_isbn(1000);
 
-        let call_procedure = Request {
-            port_id: 1,
-            message_identifier: build_message_identifier(1, 3),
-            procedure_id: 1,
-            payload: get_book_payload.write_to_bytes().unwrap(),
-            ..Default::default()
-        };
+        let response = book_service_module
+            .call_unary_procedure::<Book, _>("GetBook", get_book_payload)
+            .await
+            .unwrap();
 
-        let _result = client_transport
-            .send(call_procedure.write_to_bytes().unwrap())
-            .await;
+        println!("> Got Book: {:?}", response);
 
-        let res = client_transport.receive().await.unwrap();
-
-        println!("> Call Procedure > Server Response Type: {:?}", res);
-        match res {
-            TransportEvent::Message(bytes) => {
-                let procedure_response = Response::parse_from_bytes(&bytes).unwrap();
-                let payload = api::Book::parse_from_bytes(&procedure_response.payload).unwrap();
-                println!(
-                    "> Call Procedure > Server Response body: {:?}",
-                    procedure_response
-                );
-                println!(
-                    "> Call Procedure > Server Response body > payload: {:?}",
-                    payload
-                )
-            }
-            _ => {
-                println!("> Call Procedure > Server Response not message type")
-            }
-        }
+        assert_eq!(response.get_isbn(), 1000);
+        assert_eq!(response.get_title(), "Rust: crash course");
+        assert_eq!(response.get_author(), "mr steve");
     });
 
     let server_handle = tokio::spawn(async {
@@ -154,7 +89,6 @@ async fn main() {
         let mut server = RpcServer::create(ctx);
         // 3- Server listen to Create Port request
         server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
-            println!("Port {} created!", port.name);
             codegen::BookServiceCodeGen::register_service(port, book_service::BookService {})
         });
 
