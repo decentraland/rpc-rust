@@ -62,7 +62,7 @@ impl RpcClient {
             Ok(response) => {
                 if let TransportEvent::Connect = response {
                     transport.establish_connection();
-                    return Ok(transport);
+                    Ok(transport)
                 } else {
                     Err(ClientError::TransportError)
                 }
@@ -123,8 +123,7 @@ impl RpcClientPort {
                 module_name: module_name.to_string(),
                 ..Default::default()
             })
-            .await
-            .map_err(|err| err)?;
+            .await?;
 
         let mut procedures = HashMap::new();
 
@@ -193,8 +192,7 @@ impl RpcClientModule {
                 payload,
                 ..Default::default()
             })
-            .await
-            .map_err(|err| err)?;
+            .await?;
 
         let returned_type = ReturnType::parse_from_bytes(&response.2.payload)
             .map_err(|_| ClientError::ProtocolError)?;
