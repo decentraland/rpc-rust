@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use tokio::time::sleep;
 
-use crate::{codegen::BookServiceInterface, MyExampleContext};
+use crate::{codegen::server::BookServiceInterface, MyExampleContext};
 
 use super::api::Book;
 

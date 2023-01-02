@@ -12,6 +12,10 @@ use rpc_rust::{
 use service::{api::Book, book_service};
 
 use crate::service::api::GetBookRequest;
+use codegen::{
+    client::{BookServiceClient, BookServiceClientInterface},
+    server::BookServiceCodeGen,
+};
 
 pub struct MyExampleContext {
     pub hardcoded_database: Vec<Book>,
@@ -63,15 +67,15 @@ async fn main() {
 
         assert_eq!(client_port.port_name, "TEST_PORT");
 
-        let book_service_module = client_port.load_module("BookService").await.unwrap();
+        let book_service_module = client_port
+            .load_module::<BookServiceClient>("BookService")
+            .await
+            .unwrap();
 
         let mut get_book_payload = GetBookRequest::default();
         get_book_payload.set_isbn(1000);
 
-        let response = book_service_module
-            .call_unary_procedure::<Book, _>("GetBook", get_book_payload)
-            .await
-            .unwrap();
+        let response = book_service_module.get_book(get_book_payload).await;
 
         println!("> Got Book: {:?}", response);
 
@@ -89,7 +93,7 @@ async fn main() {
         let mut server = RpcServer::create(ctx);
         // 3- Server listen to Create Port request
         server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
-            codegen::BookServiceCodeGen::register_service(port, book_service::BookService {})
+            BookServiceCodeGen::register_service(port, book_service::BookService {})
         });
 
         server.attach_transport(server_transport);

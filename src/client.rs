@@ -14,6 +14,10 @@ use crate::{
     transports::{Transport, TransportEvent},
 };
 
+pub trait ServiceClient {
+    fn set_client_module(client_module: RpcClientModule) -> Self;
+}
+
 pub type ClientResult<T> = Result<T, ClientError>;
 
 #[derive(Debug)]
@@ -101,7 +105,7 @@ impl RpcClientPort {
         }
     }
 
-    pub async fn load_module(&self, module_name: &str) -> ClientResult<RpcClientModule> {
+    pub async fn load_module<S: ServiceClient>(&self, module_name: &str) -> ClientResult<S> {
         let response: (u32, u32, RequestModuleResponse) = self
             .client_request_dispatcher
             .request(|message_id| RequestModule {
@@ -131,7 +135,9 @@ impl RpcClientPort {
             self.client_request_dispatcher.clone(),
         );
 
-        Ok(client_module)
+        let client_service = S::set_client_module(client_module);
+
+        Ok(client_service)
     }
 }
 
