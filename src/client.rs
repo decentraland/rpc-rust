@@ -1,6 +1,5 @@
 use std::{collections::HashMap, sync::Arc};
 
-use futures_util::TryFutureExt;
 use protobuf::Message;
 use tokio::sync::Mutex;
 
@@ -34,13 +33,8 @@ pub struct RpcClient {
 
 impl RpcClient {
     pub async fn new<T: Transport + Send + Sync + 'static>(transport: T) -> ClientResult<Self> {
-        println!("Client IsConnected: {}", transport.is_connected());
-        let transport = Self::establish_connection(transport)
-            .map_err(|err| err)
-            .await?;
+        let transport = Self::establish_connection(transport).await?;
         let transport = Arc::new(transport);
-
-        println!("Client IsConnected: {}", transport.is_connected());
 
         let client = Self {
             ports: HashMap::new(),
@@ -59,15 +53,11 @@ impl RpcClient {
             .map_err(|_| ClientError::TransportError)?;
 
         match transport.receive().await {
-            Ok(response) => {
-                if let TransportEvent::Connect = response {
-                    transport.establish_connection();
-                    Ok(transport)
-                } else {
-                    Err(ClientError::TransportError)
-                }
+            Ok(TransportEvent::Connect) => {
+                transport.establish_connection();
+                Ok(transport)
             }
-            Err(_) => Err(ClientError::TransportError),
+            _ => Err(ClientError::TransportError),
         }
     }
 
