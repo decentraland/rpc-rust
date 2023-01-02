@@ -40,7 +40,7 @@ impl Transport for MemoryTransport {
                 Ok(TransportEvent::Message(event))
             }
             Err(_) => {
-                self.receiver.close();
+                self.close().await;
                 Ok(TransportEvent::Close)
             }
         }
