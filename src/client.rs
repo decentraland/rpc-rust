@@ -233,6 +233,7 @@ impl ClientRequestDispatcher {
             .await
             .map_err(|_| ClientError::TransportError)?;
 
+        // TODO: bug - mixed responses on conccurrent requests
         let response = self
             .transport
             .receive()
