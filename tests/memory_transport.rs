@@ -5,7 +5,7 @@ use rpc_rust::{
 
 #[tokio::test]
 async fn ping_pong() {
-    let (mut client, mut server) = MemoryTransport::create();
+    let (client, server) = MemoryTransport::create();
 
     let input = vec![1, 2, 3];
     let _ = client.send(input.clone()).await;
@@ -23,7 +23,7 @@ async fn ping_pong() {
         assert_eq!(&data, &input);
     }
 
-    client.close();
+    client.close().await;
     let close_event = client.receive().await.expect("can receive");
     assert!(matches!(close_event, TransportEvent::Close));
 }

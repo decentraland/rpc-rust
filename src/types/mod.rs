@@ -33,6 +33,12 @@ impl<Context> ServiceModuleDefinition<Context> {
     }
 }
 
+impl<Context> Default for ServiceModuleDefinition<Context> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug)]
 pub struct ServerModuleProcedures {
     pub procedure_name: String,

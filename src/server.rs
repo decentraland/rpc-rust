@@ -8,7 +8,7 @@ use crate::{
             CreatePort, CreatePortResponse, DestroyPort, ModuleProcedure, Request, RequestModule,
             RequestModuleResponse, Response, RpcMessageTypes,
         },
-        parse::parse_header,
+        parse::{build_message_identifier, parse_header},
     },
     transports::{Transport, TransportEvent},
     types::{
@@ -75,7 +75,22 @@ impl<Context> RpcServer<Context> {
                 .await
             {
                 Ok(event) => match event {
-                    TransportEvent::Connect => println!("Transport connected"),
+                    TransportEvent::Connect => {
+                        self.transport
+                            .as_mut()
+                            .expect("No transport attached")
+                            .connected()
+                            .await;
+                        println!("Transport connected");
+                        // Response back to the client to finally establish the connection
+                        // on both ends
+                        self.transport
+                            .as_ref()
+                            .unwrap()
+                            .send(vec![0])
+                            .await
+                            .expect("expect to be able to connect");
+                    }
                     TransportEvent::Error(err) => println!("Transport error {}", err),
                     TransportEvent::Message(payload) => match self.handle_message(payload).await {
                         Ok(_) => println!("Transport message handled!"),
@@ -117,7 +132,6 @@ impl<Context> RpcServer<Context> {
             .as_ref()
             .ok_or(ServerError::TransportNotAttached)?;
         let request = Request::parse_from_bytes(payload).map_err(|_| ServerError::ProtocolError)?;
-        println!("Request {:?}", request);
 
         match self.ports.get(&request.port_id) {
             Some(port) => {
@@ -127,7 +141,10 @@ impl<Context> RpcServer<Context> {
                     .await?;
 
                 let response = Response {
-                    message_identifier,
+                    message_identifier: build_message_identifier(
+                        RpcMessageTypes::RpcMessageTypes_RESPONSE as u32,
+                        message_identifier,
+                    ),
                     payload: procedure_response,
                     ..Default::default()
                 };
@@ -163,12 +180,14 @@ impl<Context> RpcServer<Context> {
             .ok_or(ServerError::TransportNotAttached)?;
         let request_module =
             RequestModule::parse_from_bytes(payload).map_err(|_| ServerError::ProtocolError)?;
-        println!("> REQUEST_MODULE > request: {:?}", request_module);
         if let Some(port) = self.ports.get_mut(&request_module.port_id) {
             if let Ok(server_module_declaration) = port.load_module(request_module.module_name) {
                 let mut response = RequestModuleResponse::default();
                 response.set_port_id(request_module.port_id);
-                response.set_message_identifier(message_identifier);
+                response.set_message_identifier(build_message_identifier(
+                    RpcMessageTypes::RpcMessageTypes_REQUEST_MODULE_RESPONSE as u32,
+                    message_identifier,
+                ));
                 let mut procedures: RepeatedField<ModuleProcedure> = RepeatedField::default();
                 for procedure in &server_module_declaration.procedures {
                     let mut module_procedure = ModuleProcedure::default();
@@ -185,10 +204,10 @@ impl<Context> RpcServer<Context> {
                     .await
                     .map_err(|_| ServerError::TransportError)?
             } else {
-                println!("> REQUEST_MODULE > unable to load the module")
+                return Err(ServerError::LoadModuleError);
             }
         } else {
-            println!("> REQUEST_MODULE > unable to get the port")
+            return Err(ServerError::PortNotFound);
         }
 
         Ok(())
@@ -214,7 +233,6 @@ impl<Context> RpcServer<Context> {
         let port_id = (self.ports.len() + 1) as u32;
         let create_port =
             CreatePort::parse_from_bytes(payload).map_err(|_| ServerError::ProtocolError)?;
-        println!("CreatePort {:?}", create_port);
         let port_name = create_port.port_name;
         let mut port = RpcServerPort::new(port_name.clone());
 
@@ -224,9 +242,14 @@ impl<Context> RpcServer<Context> {
 
         self.ports.insert(port_id, port);
 
-        let mut response = CreatePortResponse::new();
-        response.message_identifier = message_identifier;
-        response.port_id = port_id;
+        let response = CreatePortResponse {
+            message_identifier: build_message_identifier(
+                RpcMessageTypes::RpcMessageTypes_CREATE_PORT_RESPONSE as u32,
+                message_identifier,
+            ),
+            port_id,
+            ..Default::default()
+        };
         let response = response
             .write_to_bytes()
             .map_err(|_| ServerError::TransportError)?;
@@ -246,8 +269,6 @@ impl<Context> RpcServer<Context> {
     fn handle_destroy_port(&mut self, payload: &[u8]) -> ServerResult<()> {
         let destroy_port =
             DestroyPort::parse_from_bytes(payload).map_err(|_| ServerError::ProtocolError)?;
-
-        println!("DestroyPort {:?}", destroy_port);
 
         self.ports.remove(&destroy_port.port_id);
         Ok(())

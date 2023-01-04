@@ -11,6 +11,8 @@ futures-channel = "0.3"
 tokio = { version = "1.0.0", default-features = false, features = ["io-util", "io-std", "macros", "net", "rt-multi-thread", "time", "sync"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 async-trait = "0.1.57"
+async-channel = "1.8.0"
+tokio-util = "0.7.4"
 
 [build-dependencies]
 protoc-rust = "2.27.1"

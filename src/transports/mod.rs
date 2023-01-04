@@ -1,4 +1,3 @@
-
 use async_trait::async_trait;
 
 pub mod memory;
@@ -28,7 +27,9 @@ pub enum TransportError {
 
 #[async_trait]
 pub trait Transport {
-    async fn receive(&mut self) -> Result<TransportEvent, TransportError>;
+    async fn receive(&self) -> Result<TransportEvent, TransportError>;
     async fn send(&self, message: Vec<u8>) -> Result<(), TransportError>;
-    fn close(&mut self);
+    async fn close(&self);
+    async fn connected(&mut self);
+    async fn is_connected(&self) -> bool;
 }

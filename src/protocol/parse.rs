@@ -1,9 +1,6 @@
 use protobuf::{Message, ProtobufEnum};
 
-use super::index::{
-    CreatePort, CreatePortResponse, DestroyPort, RemoteError, Request, RequestModule,
-    RequestModuleResponse, Response, RpcMessageHeader, RpcMessageTypes, StreamMessage,
-};
+use super::index::{RpcMessageHeader, RpcMessageTypes};
 
 /// Build message identifier from type and number, and returns one number which it's the `message_identifier`
 ///
@@ -34,45 +31,54 @@ pub fn parse_header(data: &[u8]) -> Option<(RpcMessageTypes, u32)> {
 
 /// Parse protocol message from bytes
 /// Returns None when message can't be parsed or should not do it
-pub fn parse_protocol_message(data: &[u8]) -> Option<(u32, Box<dyn Message>, u32)> {
-    let message_header = RpcMessageHeader::parse_from_bytes(data).ok()?;
-    let (message_type, message_number) =
-        parse_message_identifier(message_header.get_message_identifier());
-    let rpc_message_type = RpcMessageTypes::from_i32(message_type as i32)?;
+pub fn parse_protocol_message<R: Message>(data: &[u8]) -> Option<(u32, u32, R)> {
+    let (message_type, message_number) = parse_header(data).unwrap();
 
-    let message: Box<dyn Message> = match rpc_message_type {
-        RpcMessageTypes::RpcMessageTypes_REQUEST => Box::new(Request::parse_from_bytes(data).ok()?),
-        RpcMessageTypes::RpcMessageTypes_RESPONSE => {
-            Box::new(Response::parse_from_bytes(data).ok()?)
-        }
-        RpcMessageTypes::RpcMessageTypes_CREATE_PORT_RESPONSE => {
-            Box::new(CreatePortResponse::parse_from_bytes(data).ok()?)
-        }
-        RpcMessageTypes::RpcMessageTypes_STREAM_MESSAGE => {
-            Box::new(StreamMessage::parse_from_bytes(data).ok()?)
-        }
-        RpcMessageTypes::RpcMessageTypes_STREAM_ACK => {
-            Box::new(StreamMessage::parse_from_bytes(data).ok()?)
-        }
-        RpcMessageTypes::RpcMessageTypes_CREATE_PORT => {
-            Box::new(CreatePort::parse_from_bytes(data).ok()?)
-        }
-        RpcMessageTypes::RpcMessageTypes_REQUEST_MODULE => {
-            Box::new(RequestModule::parse_from_bytes(data).ok()?)
-        }
-        RpcMessageTypes::RpcMessageTypes_REQUEST_MODULE_RESPONSE => {
-            Box::new(RequestModuleResponse::parse_from_bytes(data).ok()?)
-        }
-        RpcMessageTypes::RpcMessageTypes_REMOTE_ERROR_RESPONSE => {
-            Box::new(RemoteError::parse_from_bytes(data).ok()?)
-        }
-        RpcMessageTypes::RpcMessageTypes_DESTROY_PORT => {
-            Box::new(DestroyPort::parse_from_bytes(data).ok()?)
-        }
-        RpcMessageTypes::RpcMessageTypes_EMPTY | RpcMessageTypes::RpcMessageTypes_SERVER_READY => {
-            return None
-        }
-    };
+    if matches!(
+        message_type,
+        RpcMessageTypes::RpcMessageTypes_EMPTY | RpcMessageTypes::RpcMessageTypes_SERVER_READY
+    ) {
+        return None;
+    }
 
-    Some((message_type, message, message_number))
+    let message = R::parse_from_bytes(data);
+
+    match message {
+        Ok(message) => Some((message_type as u32, message_number, message)),
+        Err(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use protobuf::Message;
+
+    use crate::protocol::index::{CreatePort, CreatePortResponse, RpcMessageTypes};
+
+    use super::{build_message_identifier, parse_protocol_message};
+
+    #[test]
+    fn test_parse_protocol_message() {
+        let port = CreatePort {
+            message_identifier: build_message_identifier(
+                RpcMessageTypes::RpcMessageTypes_CREATE_PORT as u32,
+                1,
+            ),
+            port_name: "port_name".to_string(),
+            ..Default::default()
+        };
+
+        let vec = port.write_to_bytes().unwrap();
+
+        let parse_back = parse_protocol_message::<CreatePortResponse>(&vec);
+
+        assert!(parse_back.is_some());
+        let parse_back = parse_back.unwrap();
+        assert_eq!(
+            parse_back.0,
+            RpcMessageTypes::RpcMessageTypes_CREATE_PORT as u32
+        );
+        // parse_protocol_message dont add the port_id, just parse it
+        assert_eq!(parse_back.2.get_port_id(), 0);
+    }
 }
