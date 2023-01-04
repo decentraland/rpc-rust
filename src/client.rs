@@ -2,12 +2,13 @@ use std::{collections::HashMap, sync::Arc};
 
 use protobuf::Message;
 use tokio::{
+    select,
     sync::{
         oneshot::{self, Sender},
         Mutex,
     },
-    task::JoinHandle,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     protocol::{
@@ -39,7 +40,6 @@ pub enum ClientError {
 pub struct RpcClient {
     ports: HashMap<String, RpcClientPort>,
     client_request_dispatcher: Arc<ClientRequestDispatcher>,
-    _client_request_task: JoinHandle<()>,
 }
 
 impl RpcClient {
@@ -48,16 +48,11 @@ impl RpcClient {
         let transport = Box::new(transport);
         let client_request_dispatcher = Arc::new(ClientRequestDispatcher::new(transport));
 
-        // Process the requests<>responses between client<>server in another tasks
-        let clone_dispatcher = client_request_dispatcher.clone();
-        let join_handler = tokio::spawn(async move {
-            clone_dispatcher.process().await;
-        });
+        client_request_dispatcher.clone().start();
 
         let client = Self {
             ports: HashMap::new(),
             client_request_dispatcher,
-            _client_request_task: join_handler,
         };
 
         Ok(client)
@@ -106,10 +101,9 @@ impl RpcClient {
     }
 }
 
-// We should implement this to abort the tasks that it's listening and waiting messages from the RpcServer
 impl Drop for RpcClient {
     fn drop(&mut self) {
-        self._client_request_task.abort();
+        self.client_request_dispatcher.stop();
     }
 }
 
@@ -224,6 +218,7 @@ struct ClientRequestDispatcher {
     next_message_id: Mutex<u32>,
     transport: Box<dyn Transport + Send + Sync>,
     one_time_listeners: Mutex<HashMap<u32, oneshot::Sender<Vec<u8>>>>,
+    process_cancellation_token: CancellationToken,
 }
 
 impl ClientRequestDispatcher {
@@ -232,39 +227,66 @@ impl ClientRequestDispatcher {
             next_message_id: Mutex::new(1),
             transport,
             one_time_listeners: Mutex::new(HashMap::new()),
+            process_cancellation_token: CancellationToken::new(),
         }
+    }
+
+    fn start(self: Arc<Self>) {
+        let this = self.clone();
+        let token = self.process_cancellation_token.clone();
+        tokio::spawn(async move {
+            select! {
+                _ = token.cancelled() => {
+                    println!("> ClientRequestDispatcher cancelled!")
+                },
+                _ = this.process() => {
+
+                }
+            }
+        });
+    }
+
+    fn stop(&self) {
+        self.process_cancellation_token.cancel();
     }
 
     async fn process(&self) {
         loop {
             match self.transport.receive().await {
-                Ok(event) => {
-                    if let TransportEvent::Message(data) = event {
-                        let message_header = parse_header(&data);
-                        // TODO: find a way to communicate the error of parsing the message_header
-                        if message_header.is_none() {
+                Ok(TransportEvent::Message(data)) => {
+                    let message_header = parse_header(&data);
+                    // TODO: find a way to communicate the error of parsing the message_header
+                    match message_header {
+                        Some(message_header) => {
+                            let mut read_callbacks = self.one_time_listeners.lock().await;
+                            // We remove the listener in order to get a owned value and also remove it from memory
+                            let sender = read_callbacks.remove(&message_header.1);
+                            match sender.map(|sender| sender.send(data)) {
+                                Some(Ok(_)) => {}
+                                Some(Err(_)) => {
+                                    println!(
+                                        "> Client > Error on sending message through transport"
+                                    );
+                                    continue;
+                                }
+                                None => {
+                                    println!(
+                                        "> Client > No callback registered for message {} response",
+                                        message_header.1
+                                    );
+                                    continue;
+                                }
+                            }
+                        }
+                        None => {
                             println!("> Client > Error on parsing message header");
                             continue;
                         }
-                        let message_header = message_header.unwrap();
-                        let mut read_callbacks = self.one_time_listeners.lock().await;
-                        // We remove the listener in order to get a owned value and also remove it from memory
-                        let sender = read_callbacks.remove(&message_header.1);
-                        if sender.is_none() {
-                            println!(
-                                "> Client > No callback registered for message {} response",
-                                message_header.1
-                            );
-                            continue;
-                        }
-                        let sender = sender.unwrap();
-                        if let Err(err) = sender.send(data) {
-                            println!(
-                                "> Client > Error on sending data to a one time callback {err:?}"
-                            );
-                            continue;
-                        }
                     }
+                }
+                Ok(_) => {
+                    // Ignore another type of TransportEvent
+                    continue;
                 }
                 Err(_) => {
                     println!("Client error on receiving");
