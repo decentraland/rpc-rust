@@ -79,7 +79,8 @@ impl<Context> RpcServer<Context> {
                         self.transport
                             .as_mut()
                             .expect("No transport attached")
-                            .establish_connection();
+                            .connected()
+                            .await;
                         println!("Transport connected");
                         // Response back to the client to finally establish the connection
                         // on both ends

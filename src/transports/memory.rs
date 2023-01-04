@@ -1,10 +1,11 @@
 use async_channel::{bounded, Receiver, Sender};
 use async_trait::async_trait;
+use tokio::sync::Mutex;
 
 use super::{Transport, TransportError, TransportEvent};
 
 pub struct MemoryTransport {
-    connected: bool,
+    connected: Mutex<bool>,
     sender: Sender<Vec<u8>>,
     receiver: Receiver<Vec<u8>>,
 }
@@ -14,7 +15,7 @@ impl MemoryTransport {
         Self {
             sender,
             receiver,
-            connected: false,
+            connected: Mutex::new(false),
         }
     }
 
@@ -55,13 +56,16 @@ impl Transport for MemoryTransport {
 
     async fn close(&self) {
         self.receiver.close();
+        let mut lock = self.connected.lock().await;
+        *lock = false;
     }
 
-    fn establish_connection(&mut self) {
-        self.connected = true;
+    async fn connected(&mut self) {
+        let mut lock = self.connected.lock().await;
+        *lock = true
     }
 
-    fn is_connected(&self) -> bool {
-        self.connected
+    async fn is_connected(&self) -> bool {
+        *self.connected.lock().await
     }
 }

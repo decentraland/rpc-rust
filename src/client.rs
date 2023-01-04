@@ -69,7 +69,7 @@ impl RpcClient {
 
         match transport.receive().await {
             Ok(TransportEvent::Connect) => {
-                transport.establish_connection();
+                transport.connected().await;
                 Ok(transport)
             }
             _ => Err(ClientError::TransportError),
