@@ -1,7 +1,14 @@
 use std::{collections::HashMap, sync::Arc};
 
 use protobuf::Message;
-use tokio::sync::Mutex;
+use tokio::{
+    select,
+    sync::{
+        oneshot::{self, Sender},
+        Mutex,
+    },
+};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     protocol::{
@@ -9,7 +16,7 @@ use crate::{
             CreatePort, CreatePortResponse, Request, RequestModule, RequestModuleResponse,
             Response, RpcMessageTypes,
         },
-        parse::{build_message_identifier, parse_protocol_message},
+        parse::{build_message_identifier, parse_header, parse_protocol_message},
     },
     transports::{Transport, TransportEvent},
 };
@@ -38,12 +45,16 @@ pub struct RpcClient {
 impl RpcClient {
     pub async fn new<T: Transport + Send + Sync + 'static>(transport: T) -> ClientResult<Self> {
         let transport = Self::establish_connection(transport).await?;
-        let transport = Arc::new(transport);
+        let transport = Box::new(transport);
+        let client_request_dispatcher = Arc::new(ClientRequestDispatcher::new(transport));
+
+        client_request_dispatcher.clone().start();
 
         let client = Self {
             ports: HashMap::new(),
-            client_request_dispatcher: Arc::new(ClientRequestDispatcher::new(transport)),
+            client_request_dispatcher,
         };
+
         Ok(client)
     }
 
@@ -87,6 +98,12 @@ impl RpcClient {
         self.ports.insert(port_name.to_string(), rpc_client_port);
 
         Ok(self.ports.get(port_name).unwrap())
+    }
+}
+
+impl Drop for RpcClient {
+    fn drop(&mut self) {
+        self.client_request_dispatcher.stop();
     }
 }
 
@@ -199,14 +216,83 @@ impl RpcClientModule {
 
 struct ClientRequestDispatcher {
     next_message_id: Mutex<u32>,
-    transport: Arc<dyn Transport + Send + Sync>,
+    transport: Box<dyn Transport + Send + Sync>,
+    one_time_listeners: Mutex<HashMap<u32, oneshot::Sender<Vec<u8>>>>,
+    process_cancellation_token: CancellationToken,
 }
 
 impl ClientRequestDispatcher {
-    pub fn new(transport: Arc<dyn Transport + Send + Sync>) -> Self {
+    pub fn new(transport: Box<dyn Transport + Send + Sync>) -> Self {
         Self {
             next_message_id: Mutex::new(1),
             transport,
+            one_time_listeners: Mutex::new(HashMap::new()),
+            process_cancellation_token: CancellationToken::new(),
+        }
+    }
+
+    fn start(self: Arc<Self>) {
+        let this = self.clone();
+        let token = self.process_cancellation_token.clone();
+        tokio::spawn(async move {
+            select! {
+                _ = token.cancelled() => {
+                    println!("> ClientRequestDispatcher cancelled!")
+                },
+                _ = this.process() => {
+
+                }
+            }
+        });
+    }
+
+    fn stop(&self) {
+        self.process_cancellation_token.cancel();
+    }
+
+    async fn process(&self) {
+        loop {
+            match self.transport.receive().await {
+                Ok(TransportEvent::Message(data)) => {
+                    let message_header = parse_header(&data);
+                    // TODO: find a way to communicate the error of parsing the message_header
+                    match message_header {
+                        Some(message_header) => {
+                            let mut read_callbacks = self.one_time_listeners.lock().await;
+                            // We remove the listener in order to get a owned value and also remove it from memory
+                            let sender = read_callbacks.remove(&message_header.1);
+                            match sender.map(|sender| sender.send(data)) {
+                                Some(Ok(_)) => {}
+                                Some(Err(_)) => {
+                                    println!(
+                                        "> Client > Error on sending message through transport"
+                                    );
+                                    continue;
+                                }
+                                None => {
+                                    println!(
+                                        "> Client > No callback registered for message {} response",
+                                        message_header.1
+                                    );
+                                    continue;
+                                }
+                            }
+                        }
+                        None => {
+                            println!("> Client > Error on parsing message header");
+                            continue;
+                        }
+                    }
+                }
+                Ok(_) => {
+                    // Ignore another type of TransportEvent
+                    continue;
+                }
+                Err(_) => {
+                    println!("Client error on receiving");
+                    break;
+                }
+            }
         }
     }
 
@@ -214,14 +300,14 @@ impl ClientRequestDispatcher {
         &self,
         cb: Callback,
     ) -> ClientResult<(u32, u32, ReturnType)> {
-        let payload = {
+        let (payload, current_request_message_id) = {
             let mut message_lock = self.next_message_id.lock().await;
             let message_id = *message_lock;
             println!("Message ID: {}", message_id);
             let payload = cb(message_id);
             // store next_message_id
             *message_lock += 1;
-            payload
+            (payload, message_id)
         }; // Force to drop the mutex for other conccurrent operations
 
         let payload = payload
@@ -233,20 +319,21 @@ impl ClientRequestDispatcher {
             .await
             .map_err(|_| ClientError::TransportError)?;
 
-        // TODO: bug - mixed responses on conccurrent requests
-        let response = self
-            .transport
-            .receive()
-            .await
-            .map_err(|_| ClientError::TransportError)?;
+        let (tx, rx) = oneshot::channel::<Vec<u8>>();
 
-        if let TransportEvent::Message(data) = response {
-            match parse_protocol_message::<ReturnType>(&data) {
-                Some(result) => Ok(result),
-                None => Err(ClientError::ProtocolError),
-            }
-        } else {
-            Err(ClientError::UnknownError)
+        self.register_one_time_listener(current_request_message_id, tx)
+            .await;
+
+        let response = rx.await.map_err(|_| ClientError::TransportError)?;
+
+        match parse_protocol_message::<ReturnType>(&response) {
+            Some(result) => Ok(result),
+            None => Err(ClientError::ProtocolError),
         }
+    }
+
+    async fn register_one_time_listener(&self, message_id: u32, callback: Sender<Vec<u8>>) {
+        let mut lock = self.one_time_listeners.lock().await;
+        lock.insert(message_id, callback);
     }
 }
