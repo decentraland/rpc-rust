@@ -106,7 +106,7 @@ impl RpcClient {
     }
 }
 
-// We shpuld implement this to abort the tasks that it's listening and waiting messages from the RpcServer
+// We should implement this to abort the tasks that it's listening and waiting messages from the RpcServer
 impl Drop for RpcClient {
     fn drop(&mut self) {
         self._client_request_task.abort();
