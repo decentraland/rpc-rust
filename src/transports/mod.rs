@@ -30,6 +30,6 @@ pub trait Transport {
     async fn receive(&self) -> Result<TransportEvent, TransportError>;
     async fn send(&self, message: Vec<u8>) -> Result<(), TransportError>;
     async fn close(&self);
-    async fn connected(&mut self);
+    async fn connected(&self);
     async fn is_connected(&self) -> bool;
 }

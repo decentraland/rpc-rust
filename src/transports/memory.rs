@@ -1,11 +1,12 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use async_channel::{bounded, Receiver, Sender};
 use async_trait::async_trait;
-use tokio::sync::Mutex;
 
 use super::{Transport, TransportError, TransportEvent};
 
 pub struct MemoryTransport {
-    connected: Mutex<bool>,
+    connected: AtomicBool, 
     sender: Sender<Vec<u8>>,
     receiver: Receiver<Vec<u8>>,
 }
@@ -15,7 +16,7 @@ impl MemoryTransport {
         Self {
             sender,
             receiver,
-            connected: Mutex::new(false),
+            connected: AtomicBool::new(false), 
         }
     }
 
@@ -56,16 +57,14 @@ impl Transport for MemoryTransport {
 
     async fn close(&self) {
         self.receiver.close();
-        let mut lock = self.connected.lock().await;
-        *lock = false;
+        self.connected.store(false, Ordering::SeqCst);
     }
 
-    async fn connected(&mut self) {
-        let mut lock = self.connected.lock().await;
-        *lock = true
+    async fn connected(&self) {
+        self.connected.store(true, Ordering::SeqCst);
     }
 
     async fn is_connected(&self) -> bool {
-        *self.connected.lock().await
+        self.connected.load(Ordering::Relaxed)
     }
 }
