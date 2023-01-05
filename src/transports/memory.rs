@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use super::{Transport, TransportError, TransportEvent};
 
 pub struct MemoryTransport {
-    connected: AtomicBool, 
+    connected: AtomicBool,
     sender: Sender<Vec<u8>>,
     receiver: Receiver<Vec<u8>>,
 }
@@ -16,7 +16,7 @@ impl MemoryTransport {
         Self {
             sender,
             receiver,
-            connected: AtomicBool::new(false), 
+            connected: AtomicBool::new(false),
         }
     }
 
@@ -36,7 +36,8 @@ impl Transport for MemoryTransport {
     async fn receive(&self) -> Result<TransportEvent, TransportError> {
         match self.receiver.recv().await {
             Ok(event) => {
-                if event.len() == 1 && event[0] == 0 {
+                if event.len() == 1 && event[0] == 0 && !self.is_connected() {
+                    self.connected.store(true, Ordering::SeqCst);
                     return Ok(TransportEvent::Connect);
                 }
                 Ok(TransportEvent::Message(event))
@@ -60,11 +61,7 @@ impl Transport for MemoryTransport {
         self.connected.store(false, Ordering::SeqCst);
     }
 
-    async fn connected(&self) {
-        self.connected.store(true, Ordering::SeqCst);
-    }
-
-    async fn is_connected(&self) -> bool {
+    fn is_connected(&self) -> bool {
         self.connected.load(Ordering::Relaxed)
     }
 }

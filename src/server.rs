@@ -76,12 +76,6 @@ impl<Context> RpcServer<Context> {
             {
                 Ok(event) => match event {
                     TransportEvent::Connect => {
-                        self.transport
-                            .as_mut()
-                            .expect("No transport attached")
-                            .connected()
-                            .await;
-                        println!("Transport connected");
                         // Response back to the client to finally establish the connection
                         // on both ends
                         self.transport

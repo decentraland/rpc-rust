@@ -46,20 +46,22 @@ impl RpcClient {
     pub async fn new<T: Transport + Send + Sync + 'static>(transport: T) -> ClientResult<Self> {
         let transport = Self::establish_connection(transport).await?;
         let transport = Box::new(transport);
-        let client_request_dispatcher = Arc::new(ClientRequestDispatcher::new(transport));
 
+        let client_request_dispatcher = Arc::new(ClientRequestDispatcher::new(transport));
         client_request_dispatcher.clone().start();
 
-        let client = Self {
+        Ok(Self::from_dispatcher(client_request_dispatcher))
+    }
+
+    fn from_dispatcher(client_request_dispatcher: Arc<ClientRequestDispatcher>) -> Self {
+        Self {
             ports: HashMap::new(),
             client_request_dispatcher,
-        };
-
-        Ok(client)
+        }
     }
 
     async fn establish_connection<T: Transport + Send + Sync + 'static>(
-        mut transport: T,
+        transport: T,
     ) -> ClientResult<T> {
         // Send empty message to notify connection
         transport
@@ -68,10 +70,7 @@ impl RpcClient {
             .map_err(|_| ClientError::TransportError)?;
 
         match transport.receive().await {
-            Ok(TransportEvent::Connect) => {
-                transport.connected().await;
-                Ok(transport)
-            }
+            Ok(TransportEvent::Connect) => Ok(transport),
             _ => Err(ClientError::TransportError),
         }
     }

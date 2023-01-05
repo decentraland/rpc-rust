@@ -13,6 +13,7 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 async-trait = "0.1.57"
 async-channel = "1.8.0"
 tokio-util = "0.7.4"
+tokio-tungstenite = "*"
 
 [build-dependencies]
 protoc-rust = "2.27.1"
