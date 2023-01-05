@@ -40,7 +40,7 @@ pub enum ServerError {
 /// Once a RpcServer is inited, you should attach a transport and handler
 /// for the port creation.
 pub struct RpcServer<Context> {
-    /// The Transport used for the communicatio between `RpcClient` and `RpcServer`
+    /// The Transport used for the communication between `RpcClient` and `RpcServer`
     transport: Option<Box<dyn Transport + Send + Sync>>,
     /// The handler executed when a new port is created
     handler: Option<Box<PortHandlerFn<Context>>>,
