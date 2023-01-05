@@ -6,7 +6,7 @@ mod service;
 use rpc_rust::{
     client::RpcClient,
     server::{RpcServer, RpcServerPort},
-    transports::{self, memory::MemoryTransport, web_socket::WebSocketTransport},
+    transports::{self, memory::MemoryTransport, web_socket::WebSocketTransport, Transport},
 };
 
 use service::{api::Book, book_service};
@@ -66,10 +66,16 @@ async fn main() {
         .run()
         .expect("Running protoc failed.");
 
-    // 1- Create Transport
-    let (client_transport, server_transport) = create_web_socket_transports().await;
-    //let (client_transport, server_transport) = create_memory_transports();
+    println!("--- Running example with Memory Transports ---");
+    run_with_transports(create_memory_transports()).await;
 
+    println!("--- Running example with Web Socket Transports ---");
+    run_with_transports(create_web_socket_transports().await).await;
+}
+
+async fn run_with_transports<T: Transport + Send + Sync + 'static>(
+    (client_transport, server_transport): (T, T),
+) {
     let client_handle = tokio::spawn(async move {
         let mut client = RpcClient::new(client_transport).await.unwrap();
 
