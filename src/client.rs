@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
+use log::{error, debug};
 use protobuf::Message;
 use tokio::{
     select,
@@ -46,20 +47,22 @@ impl RpcClient {
     pub async fn new<T: Transport + Send + Sync + 'static>(transport: T) -> ClientResult<Self> {
         let transport = Self::establish_connection(transport).await?;
         let transport = Box::new(transport);
-        let client_request_dispatcher = Arc::new(ClientRequestDispatcher::new(transport));
 
+        let client_request_dispatcher = Arc::new(ClientRequestDispatcher::new(transport));
         client_request_dispatcher.clone().start();
 
-        let client = Self {
+        Ok(Self::from_dispatcher(client_request_dispatcher))
+    }
+
+    fn from_dispatcher(client_request_dispatcher: Arc<ClientRequestDispatcher>) -> Self {
+        Self {
             ports: HashMap::new(),
             client_request_dispatcher,
-        };
-
-        Ok(client)
+        }
     }
 
     async fn establish_connection<T: Transport + Send + Sync + 'static>(
-        mut transport: T,
+        transport: T,
     ) -> ClientResult<T> {
         // Send empty message to notify connection
         transport
@@ -68,10 +71,7 @@ impl RpcClient {
             .map_err(|_| ClientError::TransportError)?;
 
         match transport.receive().await {
-            Ok(TransportEvent::Connect) => {
-                transport.connected().await;
-                Ok(transport)
-            }
+            Ok(TransportEvent::Connect) => Ok(transport),
             _ => Err(ClientError::TransportError),
         }
     }
@@ -237,7 +237,7 @@ impl ClientRequestDispatcher {
         tokio::spawn(async move {
             select! {
                 _ = token.cancelled() => {
-                    println!("> ClientRequestDispatcher cancelled!")
+                    debug!("> ClientRequestDispatcher cancelled!")
                 },
                 _ = this.process() => {
 
@@ -264,13 +264,11 @@ impl ClientRequestDispatcher {
                             match sender.map(|sender| sender.send(data)) {
                                 Some(Ok(_)) => {}
                                 Some(Err(_)) => {
-                                    println!(
-                                        "> Client > Error on sending message through transport"
-                                    );
+                                    error!("> Client > Error on sending message through transport");
                                     continue;
                                 }
                                 None => {
-                                    println!(
+                                    debug!(
                                         "> Client > No callback registered for message {} response",
                                         message_header.1
                                     );
@@ -279,7 +277,7 @@ impl ClientRequestDispatcher {
                             }
                         }
                         None => {
-                            println!("> Client > Error on parsing message header");
+                            debug!("> Client > Error on parsing message header");
                             continue;
                         }
                     }
@@ -289,7 +287,7 @@ impl ClientRequestDispatcher {
                     continue;
                 }
                 Err(_) => {
-                    println!("Client error on receiving");
+                    error!("Client error on receiving");
                     break;
                 }
             }
@@ -303,7 +301,7 @@ impl ClientRequestDispatcher {
         let (payload, current_request_message_id) = {
             let mut message_lock = self.next_message_id.lock().await;
             let message_id = *message_lock;
-            println!("Message ID: {}", message_id);
+            debug!("Message ID: {}", message_id);
             let payload = cb(message_id);
             // store next_message_id
             *message_lock += 1;

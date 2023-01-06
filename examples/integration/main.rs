@@ -6,7 +6,7 @@ mod service;
 use rpc_rust::{
     client::RpcClient,
     server::{RpcServer, RpcServerPort},
-    transports,
+    transports::{self, memory::MemoryTransport, web_socket::WebSocketTransport, Transport},
 };
 
 use service::{api::Book, book_service};
@@ -35,6 +35,27 @@ fn create_db() -> Vec<Book> {
     vec![book_1, book_2]
 }
 
+fn create_memory_transports() -> (MemoryTransport, MemoryTransport) {
+    transports::memory::MemoryTransport::create()
+}
+
+async fn create_web_socket_transports() -> (WebSocketTransport, WebSocketTransport) {
+    let server_handle = tokio::spawn(async { WebSocketTransport::listen("127.0.0.1:8080").await });
+    let client_handle =
+        tokio::spawn(async { WebSocketTransport::connect("ws://127.0.0.1:8080").await });
+
+    let server = server_handle
+        .await
+        .expect("Thread to finish")
+        .expect("Server to accept client connection");
+
+    let client = client_handle
+        .await
+        .expect("Thread to finish")
+        .expect("Client to establish connection");
+    (client, server)
+}
+
 #[tokio::main]
 async fn main() {
     // Rebuild proto when run it
@@ -45,9 +66,16 @@ async fn main() {
         .run()
         .expect("Running protoc failed.");
 
-    // 1- Create Transport
-    let (client_transport, server_transport) = transports::memory::MemoryTransport::create();
+    println!("--- Running example with Memory Transports ---");
+    run_with_transports(create_memory_transports()).await;
 
+    println!("--- Running example with Web Socket Transports ---");
+    run_with_transports(create_web_socket_transports().await).await;
+}
+
+async fn run_with_transports<T: Transport + Send + Sync + 'static>(
+    (client_transport, server_transport): (T, T),
+) {
     let client_handle = tokio::spawn(async move {
         let mut client = RpcClient::new(client_transport).await.unwrap();
 

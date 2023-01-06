@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 
 pub mod memory;
+pub mod web_socket;
 
 #[derive(Debug)]
 pub enum TransportEvent {
@@ -30,6 +31,13 @@ pub trait Transport {
     async fn receive(&self) -> Result<TransportEvent, TransportError>;
     async fn send(&self, message: Vec<u8>) -> Result<(), TransportError>;
     async fn close(&self);
-    async fn connected(&self);
-    async fn is_connected(&self) -> bool;
+
+    fn message_to_transport_event(&self, message: Vec<u8>) -> TransportEvent {
+        match message.len() == 1 && message[0] == 0 && !self.is_connected() {
+            true => TransportEvent::Connect,
+            false => TransportEvent::Message(message),
+        }
+    }
+
+    fn is_connected(&self) -> bool;
 }

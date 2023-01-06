@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc, u8};
 
+use log::{error, debug};
 use protobuf::{Message, RepeatedField};
 
 use crate::{
@@ -76,12 +77,6 @@ impl<Context> RpcServer<Context> {
             {
                 Ok(event) => match event {
                     TransportEvent::Connect => {
-                        self.transport
-                            .as_mut()
-                            .expect("No transport attached")
-                            .connected()
-                            .await;
-                        println!("Transport connected");
                         // Response back to the client to finally establish the connection
                         // on both ends
                         self.transport
@@ -91,18 +86,18 @@ impl<Context> RpcServer<Context> {
                             .await
                             .expect("expect to be able to connect");
                     }
-                    TransportEvent::Error(err) => println!("Transport error {}", err),
+                    TransportEvent::Error(err) => error!("Transport error {}", err),
                     TransportEvent::Message(payload) => match self.handle_message(payload).await {
-                        Ok(_) => println!("Transport message handled!"),
-                        Err(e) => println!("Failed to handle message: {:?}", e),
+                        Ok(_) => debug!("Transport message handled!"),
+                        Err(e) => error!("Failed to handle message: {:?}", e),
                     },
                     TransportEvent::Close => {
-                        println!("Transport closed");
+                        error!("Transport closed");
                         break;
                     }
                 },
                 Err(_) => {
-                    println!("Transport error");
+                    error!("Transport error");
                     break;
                 }
             }
@@ -305,7 +300,7 @@ impl<Context> RpcServer<Context> {
                 // noops
             }
             _ => {
-                println!("Unknown message");
+                debug!("Unknown message");
             }
         };
 
