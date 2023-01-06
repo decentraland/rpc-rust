@@ -1,6 +1,6 @@
-use protobuf::{Message, ProtobufEnum};
+use prost::Message;
 
-use super::index::{RpcMessageHeader, RpcMessageTypes};
+use super::{RpcMessageHeader, RpcMessageTypes};
 
 /// Build message identifier from type and number, and returns one number which it's the `message_identifier`
 ///
@@ -22,26 +22,26 @@ pub fn parse_message_identifier(value: u32) -> (u32, u32) {
 
 /// Parse `data` to message type and message identifier
 pub fn parse_header(data: &[u8]) -> Option<(RpcMessageTypes, u32)> {
-    let message_header = RpcMessageHeader::parse_from_bytes(data).ok()?;
+    let message_header = RpcMessageHeader::decode(data).ok()?;
     let (message_type, message_number) =
-        parse_message_identifier(message_header.get_message_identifier());
+        parse_message_identifier(message_header.message_identifier);
     let rpc_message_type = RpcMessageTypes::from_i32(message_type as i32)?;
     Some((rpc_message_type, message_number))
 }
 
 /// Parse protocol message from bytes
 /// Returns None when message can't be parsed or should not do it
-pub fn parse_protocol_message<R: Message>(data: &[u8]) -> Option<(u32, u32, R)> {
+pub fn parse_protocol_message<R: Message + Default>(data: &[u8]) -> Option<(u32, u32, R)> {
     let (message_type, message_number) = parse_header(data).unwrap();
 
     if matches!(
         message_type,
-        RpcMessageTypes::RpcMessageTypes_EMPTY | RpcMessageTypes::RpcMessageTypes_SERVER_READY
+        RpcMessageTypes::Empty | RpcMessageTypes::ServerReady
     ) {
         return None;
     }
 
-    let message = R::parse_from_bytes(data);
+    let message = R::decode(data);
 
     match message {
         Ok(message) => Some((message_type as u32, message_number, message)),
@@ -51,9 +51,8 @@ pub fn parse_protocol_message<R: Message>(data: &[u8]) -> Option<(u32, u32, R)> 
 
 #[cfg(test)]
 mod tests {
-    use protobuf::Message;
-
-    use crate::protocol::index::{CreatePort, CreatePortResponse, RpcMessageTypes};
+    use crate::protocol::*;
+    use prost::Message;
 
     use super::{build_message_identifier, parse_protocol_message};
 
@@ -61,14 +60,13 @@ mod tests {
     fn test_parse_protocol_message() {
         let port = CreatePort {
             message_identifier: build_message_identifier(
-                RpcMessageTypes::RpcMessageTypes_CREATE_PORT as u32,
+                RpcMessageTypes::CreatePort as u32,
                 1,
             ),
             port_name: "port_name".to_string(),
-            ..Default::default()
         };
 
-        let vec = port.write_to_bytes().unwrap();
+        let vec = port.encode_to_vec();
 
         let parse_back = parse_protocol_message::<CreatePortResponse>(&vec);
 
@@ -76,9 +74,9 @@ mod tests {
         let parse_back = parse_back.unwrap();
         assert_eq!(
             parse_back.0,
-            RpcMessageTypes::RpcMessageTypes_CREATE_PORT as u32
+            RpcMessageTypes::CreatePort as u32
         );
         // parse_protocol_message dont add the port_id, just parse it
-        assert_eq!(parse_back.2.get_port_id(), 0);
+        assert_eq!(parse_back.2.port_id, 0);
     }
 }

@@ -1,15 +1,13 @@
 use std::{collections::HashMap, sync::Arc, u8};
 
 use log::{error, debug};
-use protobuf::{Message, RepeatedField};
+use prost::{alloc::vec::Vec, Message};
 
 use crate::{
     protocol::{
-        index::{
-            CreatePort, CreatePortResponse, DestroyPort, ModuleProcedure, Request, RequestModule,
-            RequestModuleResponse, Response, RpcMessageTypes,
-        },
         parse::{build_message_identifier, parse_header},
+        CreatePort, CreatePortResponse, DestroyPort, ModuleProcedure, Request, RequestModule,
+        RequestModuleResponse, Response, RpcMessageTypes,
     },
     transports::{Transport, TransportEvent},
     types::{
@@ -126,7 +124,7 @@ impl<Context> RpcServer<Context> {
             .transport
             .as_ref()
             .ok_or(ServerError::TransportNotAttached)?;
-        let request = Request::parse_from_bytes(payload).map_err(|_| ServerError::ProtocolError)?;
+        let request = Request::decode(payload).map_err(|_| ServerError::ProtocolError)?;
 
         match self.ports.get(&request.port_id) {
             Some(port) => {
@@ -137,19 +135,14 @@ impl<Context> RpcServer<Context> {
 
                 let response = Response {
                     message_identifier: build_message_identifier(
-                        RpcMessageTypes::RpcMessageTypes_RESPONSE as u32,
+                        RpcMessageTypes::Response as u32,
                         message_identifier,
                     ),
                     payload: procedure_response,
-                    ..Default::default()
                 };
 
                 transport
-                    .send(
-                        response
-                            .write_to_bytes()
-                            .map_err(|_| ServerError::TransportError)?,
-                    )
+                    .send(response.encode_to_vec())
                     .await
                     .map_err(|_| ServerError::TransportError)?;
                 Ok(())
@@ -174,26 +167,27 @@ impl<Context> RpcServer<Context> {
             .as_ref()
             .ok_or(ServerError::TransportNotAttached)?;
         let request_module =
-            RequestModule::parse_from_bytes(payload).map_err(|_| ServerError::ProtocolError)?;
+            RequestModule::decode(payload).map_err(|_| ServerError::ProtocolError)?;
         if let Some(port) = self.ports.get_mut(&request_module.port_id) {
             if let Ok(server_module_declaration) = port.load_module(request_module.module_name) {
-                let mut response = RequestModuleResponse::default();
-                response.set_port_id(request_module.port_id);
-                response.set_message_identifier(build_message_identifier(
-                    RpcMessageTypes::RpcMessageTypes_REQUEST_MODULE_RESPONSE as u32,
-                    message_identifier,
-                ));
-                let mut procedures: RepeatedField<ModuleProcedure> = RepeatedField::default();
+                let mut procedures: Vec<ModuleProcedure> = Vec::default();
                 for procedure in &server_module_declaration.procedures {
-                    let mut module_procedure = ModuleProcedure::default();
-                    module_procedure.set_procedure_id(procedure.procedure_id);
-                    module_procedure.set_procedure_name(procedure.procedure_name.clone());
+                    let module_procedure = ModuleProcedure {
+                        procedure_name: procedure.procedure_name.clone(),
+                        procedure_id: procedure.procedure_id,
+                    };
                     procedures.push(module_procedure)
                 }
-                response.set_procedures(procedures);
-                let response = response
-                    .write_to_bytes()
-                    .map_err(|_| ServerError::TransportError)?;
+
+                let response = RequestModuleResponse {
+                    port_id: request_module.port_id,
+                    message_identifier: build_message_identifier(
+                        RpcMessageTypes::RequestModuleResponse as u32,
+                        message_identifier,
+                    ),
+                    procedures
+                };
+                let response = response.encode_to_vec();
                 transport
                     .send(response)
                     .await
@@ -226,8 +220,7 @@ impl<Context> RpcServer<Context> {
             .as_ref()
             .ok_or(ServerError::TransportNotAttached)?;
         let port_id = (self.ports.len() + 1) as u32;
-        let create_port =
-            CreatePort::parse_from_bytes(payload).map_err(|_| ServerError::ProtocolError)?;
+        let create_port = CreatePort::decode(payload).map_err(|_| ServerError::ProtocolError)?;
         let port_name = create_port.port_name;
         let mut port = RpcServerPort::new(port_name.clone());
 
@@ -239,15 +232,12 @@ impl<Context> RpcServer<Context> {
 
         let response = CreatePortResponse {
             message_identifier: build_message_identifier(
-                RpcMessageTypes::RpcMessageTypes_CREATE_PORT_RESPONSE as u32,
+                RpcMessageTypes::CreatePortResponse as u32,
                 message_identifier,
             ),
             port_id,
-            ..Default::default()
         };
-        let response = response
-            .write_to_bytes()
-            .map_err(|_| ServerError::TransportError)?;
+        let response = response.encode_to_vec();
         transport
             .send(response)
             .await
@@ -262,8 +252,7 @@ impl<Context> RpcServer<Context> {
     ///
     /// * `payload` - Slice of bytes containing the request payload encoded with protobuf
     fn handle_destroy_port(&mut self, payload: &[u8]) -> ServerResult<()> {
-        let destroy_port =
-            DestroyPort::parse_from_bytes(payload).map_err(|_| ServerError::ProtocolError)?;
+        let destroy_port = DestroyPort::decode(payload).map_err(|_| ServerError::ProtocolError)?;
 
         self.ports.remove(&destroy_port.port_id);
         Ok(())
@@ -283,20 +272,17 @@ impl<Context> RpcServer<Context> {
             parse_header(&payload).ok_or(ServerError::ProtocolError)?;
 
         match message_type {
-            RpcMessageTypes::RpcMessageTypes_REQUEST => {
-                self.handle_request(message_identifier, &payload).await?
-            }
-            RpcMessageTypes::RpcMessageTypes_REQUEST_MODULE => {
+            RpcMessageTypes::Request => self.handle_request(message_identifier, &payload).await?,
+            RpcMessageTypes::RequestModule => {
                 self.handle_request_module(message_identifier, &payload)
                     .await?
             }
-            RpcMessageTypes::RpcMessageTypes_CREATE_PORT => {
+            RpcMessageTypes::CreatePort => {
                 self.handle_create_port(message_identifier, &payload)
                     .await?
             }
-            RpcMessageTypes::RpcMessageTypes_DESTROY_PORT => self.handle_destroy_port(&payload)?,
-            RpcMessageTypes::RpcMessageTypes_STREAM_ACK
-            | RpcMessageTypes::RpcMessageTypes_STREAM_MESSAGE => {
+            RpcMessageTypes::DestroyPort => self.handle_destroy_port(&payload)?,
+            RpcMessageTypes::StreamAck | RpcMessageTypes::StreamMessage => {
                 // noops
             }
             _ => {

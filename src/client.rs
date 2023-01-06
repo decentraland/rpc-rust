@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use log::{error, debug};
-use protobuf::Message;
+use prost::Message;
 use tokio::{
     select,
     sync::{
@@ -13,11 +13,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     protocol::{
-        index::{
-            CreatePort, CreatePortResponse, Request, RequestModule, RequestModuleResponse,
-            Response, RpcMessageTypes,
-        },
         parse::{build_message_identifier, parse_header, parse_protocol_message},
+        CreatePort, CreatePortResponse, Request, RequestModule, RequestModuleResponse, Response,
+        RpcMessageTypes,
     },
     transports::{Transport, TransportEvent},
 };
@@ -81,11 +79,10 @@ impl RpcClient {
             .client_request_dispatcher
             .request::<CreatePortResponse, _, _>(|message_id| CreatePort {
                 message_identifier: build_message_identifier(
-                    RpcMessageTypes::RpcMessageTypes_CREATE_PORT as u32,
+                    RpcMessageTypes::CreatePort as u32,
                     message_id,
                 ),
                 port_name: port_name.to_string(),
-                ..Default::default()
             })
             .await?;
 
@@ -128,19 +125,17 @@ impl RpcClientPort {
             .request(|message_id| RequestModule {
                 port_id: self.port_id,
                 message_identifier: build_message_identifier(
-                    RpcMessageTypes::RpcMessageTypes_REQUEST_MODULE as u32,
+                    RpcMessageTypes::RequestModule as u32,
                     message_id,
                 ),
                 module_name: module_name.to_string(),
-                ..Default::default()
             })
             .await?;
 
         let mut procedures = HashMap::new();
 
         for procedure in response.2.procedures {
-            let (procedure_name, procedure_id) =
-                (procedure.get_procedure_name(), procedure.get_procedure_id());
+            let (procedure_name, procedure_id) = (procedure.procedure_name, procedure.procedure_id);
 
             procedures.insert(procedure_name.to_string(), procedure_id);
         }
@@ -180,7 +175,7 @@ impl RpcClientModule {
         }
     }
 
-    pub async fn call_unary_procedure<ReturnType: Message, M: Message>(
+    pub async fn call_unary_procedure<ReturnType: Message + Default, M: Message + Default>(
         &self,
         procedure_name: &str,
         payload: M,
@@ -190,24 +185,21 @@ impl RpcClientModule {
             return Err(ClientError::ProcedureNotFound);
         }
         let procedure_id = procedure_id.unwrap().to_owned();
-        let payload = payload
-            .write_to_bytes()
-            .map_err(|_| ClientError::ProtocolError)?;
+        let payload = payload.encode_to_vec();
         let response: (u32, u32, Response) = self
             .client_request_dispatcher
             .request(|message_id| Request {
                 port_id: self.port_id,
                 message_identifier: build_message_identifier(
-                    RpcMessageTypes::RpcMessageTypes_REQUEST as u32,
+                    RpcMessageTypes::Request as u32,
                     message_id,
                 ),
                 procedure_id,
                 payload,
-                ..Default::default()
             })
             .await?;
 
-        let returned_type = ReturnType::parse_from_bytes(&response.2.payload)
+        let returned_type = ReturnType::decode(response.2.payload.as_slice())
             .map_err(|_| ClientError::ProtocolError)?;
 
         Ok(returned_type)
@@ -294,7 +286,11 @@ impl ClientRequestDispatcher {
         }
     }
 
-    pub async fn request<ReturnType: Message, M: Message, Callback: FnOnce(u32) -> M>(
+    pub async fn request<
+        ReturnType: Message + Default,
+        M: Message + Default,
+        Callback: FnOnce(u32) -> M,
+    >(
         &self,
         cb: Callback,
     ) -> ClientResult<(u32, u32, ReturnType)> {
@@ -308,10 +304,7 @@ impl ClientRequestDispatcher {
             (payload, message_id)
         }; // Force to drop the mutex for other conccurrent operations
 
-        let payload = payload
-            .write_to_bytes()
-            .map_err(|_| ClientError::ProtocolError)?;
-
+        let payload = payload.encode_to_vec();
         self.transport
             .send(payload)
             .await

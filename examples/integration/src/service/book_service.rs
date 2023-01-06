@@ -1,20 +1,15 @@
+use crate::{Book, GetBookRequest, MyExampleContext};
 use std::{sync::Arc, time::Duration};
 
 use tokio::time::sleep;
 
-use crate::{codegen::server::BookServiceInterface, MyExampleContext};
-
-use super::api::Book;
+use crate::codegen::server::BookServiceInterface;
 
 pub struct BookService {}
 
 #[async_trait::async_trait]
 impl BookServiceInterface<MyExampleContext> for BookService {
-    async fn get_book(
-        &self,
-        request: super::api::GetBookRequest,
-        ctx: Arc<MyExampleContext>,
-    ) -> super::api::Book {
+    async fn get_book(&self, request: GetBookRequest, ctx: Arc<MyExampleContext>) -> Book {
         assert_eq!(ctx.hardcoded_database.len(), 2);
 
         // Simulate DB operation

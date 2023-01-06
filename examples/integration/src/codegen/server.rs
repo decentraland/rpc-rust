@@ -1,10 +1,10 @@
 // THIS CODE SHOULD BE AUTO-GENERATED
 use std::sync::Arc;
 
-use protobuf::Message;
+use prost::Message;
 use rpc_rust::{server::RpcServerPort, types::ServiceModuleDefinition};
 
-use crate::service::api::{Book, GetBookRequest};
+use crate::{Book, GetBookRequest};
 
 pub const SERVICE: &str = "BookService";
 
@@ -33,10 +33,10 @@ impl BookServiceCodeGen {
             let serv = serv.clone();
             Box::pin(async move {
                 let res = serv
-                    .get_book(GetBookRequest::parse_from_bytes(&request).unwrap(), context)
+                    .get_book(GetBookRequest::decode(request.as_slice()).unwrap(), context)
                     .await;
                 println!("> Service Definition > Get Book > response: {:?}", res);
-                res.write_to_bytes().unwrap()
+                res.encode_to_vec()
             })
         });
         port.register_module(SERVICE.to_string(), service_def)
