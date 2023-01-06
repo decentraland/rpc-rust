@@ -1,37 +1,29 @@
-extern crate protoc_rust;
-
-mod codegen;
-mod service;
-
+use integration::{
+    codegen::{
+        client::{BookServiceClient, BookServiceClientInterface},
+        server::BookServiceCodeGen,
+    },
+    service::book_service,
+    Book, GetBookRequest, MyExampleContext,
+};
 use rpc_rust::{
     client::RpcClient,
     server::{RpcServer, RpcServerPort},
     transports::{self, memory::MemoryTransport, web_socket::WebSocketTransport, Transport},
 };
 
-use service::{api::Book, book_service};
-
-use crate::service::api::GetBookRequest;
-use codegen::{
-    client::{BookServiceClient, BookServiceClientInterface},
-    server::BookServiceCodeGen,
-};
-
-pub struct MyExampleContext {
-    pub hardcoded_database: Vec<Book>,
-}
-
 fn create_db() -> Vec<Book> {
-    let mut book_1 = Book::default();
-    book_1.set_author("mr steve".to_string());
-    book_1.set_title("Rust: crash course".to_string());
-    book_1.set_isbn(1000);
+    let book_1 = Book {
+        author: "mr steve".to_string(),
+        title: "Rust: crash course".to_string(),
+        isbn: 1000,
+    };
 
-    let mut book_2 = Book::default();
-    book_2.set_author("mr jobs".to_string());
-    book_2.set_title("Rust: how do futures work under the hood?".to_string());
-    book_2.set_isbn(1001);
-
+    let book_2 = Book {
+        author: "mr jobs".to_string(),
+        title: "Rust: how do futures work under the hood?".to_string(),
+        isbn: 1000,
+    };
     vec![book_1, book_2]
 }
 
@@ -58,14 +50,6 @@ async fn create_web_socket_transports() -> (WebSocketTransport, WebSocketTranspo
 
 #[tokio::main]
 async fn main() {
-    // Rebuild proto when run it
-    protoc_rust::Codegen::new()
-        .out_dir("examples/integration/service")
-        .inputs(["examples/integration/service/api.proto"])
-        .include("examples/integration/service")
-        .run()
-        .expect("Running protoc failed.");
-
     println!("--- Running example with Memory Transports ---");
     run_with_transports(create_memory_transports()).await;
 
@@ -100,16 +84,15 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
             .await
             .unwrap();
 
-        let mut get_book_payload = GetBookRequest::default();
-        get_book_payload.set_isbn(1000);
+        let get_book_payload = GetBookRequest { isbn: 1000 };
 
         let response = book_service_module.get_book(get_book_payload).await;
 
         println!("> Got Book: {:?}", response);
 
-        assert_eq!(response.get_isbn(), 1000);
-        assert_eq!(response.get_title(), "Rust: crash course");
-        assert_eq!(response.get_author(), "mr steve");
+        assert_eq!(response.isbn, 1000);
+        assert_eq!(response.title, "Rust: crash course");
+        assert_eq!(response.author, "mr steve");
     });
 
     let server_handle = tokio::spawn(async {

@@ -1,7 +1,13 @@
 # RPC Rust
 
 ## Requirements
+
+Install protoc binaries
+
 `brew install protobuf` | `sudo apt-get install protobuf-compiler`
+
+Install Just for commands
+`cargo install just`
 
 ## Build
 
@@ -9,4 +15,4 @@
 
 ## Run the integration example
 
-`make example`
+`just run-integration`

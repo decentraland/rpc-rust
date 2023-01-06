@@ -1,7 +1,7 @@
 // THIS CODE SHOULD BE AUTO-GENERATED
 use rpc_rust::client::{RpcClientModule, ServiceClient};
 
-use crate::service::api::{Book, GetBookRequest};
+use crate::{Book, GetBookRequest};
 
 #[async_trait::async_trait]
 pub trait BookServiceClientInterface {
