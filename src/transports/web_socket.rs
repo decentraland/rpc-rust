@@ -1,13 +1,13 @@
 use futures_util::{
     stream::{SplitSink, SplitStream},
-    StreamExt, SinkExt, TryStreamExt,
+    SinkExt, StreamExt, TryStreamExt,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio_tungstenite::{accept_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
-use async_trait::async_trait;
-
 use super::{Transport, TransportError, TransportEvent};
+use async_trait::async_trait;
+use log::debug;
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::Mutex,
@@ -39,7 +39,7 @@ impl WebSocketTransport {
         let (ws, _) = connect_async(address)
             .await
             .map_err(|_| TransportError::Connection)?;
-        println!("Connected to {}", address);
+        debug!("Connected to {}", address);
 
         Ok(Self::create(ws))
     }
@@ -47,7 +47,7 @@ impl WebSocketTransport {
     pub async fn listen(address: &str) -> Result<WebSocketTransport, TransportError> {
         // listen to given address
         let listener = TcpListener::bind(address).await.expect("Can't listen");
-        println!("Listening on: {}", address);
+        debug!("Listening on: {}", address);
 
         // wait for a connection
         match listener.accept().await {
@@ -55,7 +55,7 @@ impl WebSocketTransport {
                 let peer = stream
                     .peer_addr()
                     .expect("connected streams should have a peer address");
-                println!("Peer address: {}", peer);
+                debug!("Peer address: {}", peer);
                 let stream = MaybeTlsStream::Plain(stream);
                 let ws = accept_async(stream)
                     .await
@@ -86,7 +86,7 @@ impl Transport for WebSocketTransport {
                     }
                 }
                 None => {
-                    println!("Nothing yet")
+                    debug!("Nothing yet")
                 }
             }
         }
@@ -111,7 +111,7 @@ impl Transport for WebSocketTransport {
                 self.ready.store(false, Ordering::SeqCst);
             }
             _ => {
-                println!("Couldn't close tranport")
+                debug!("Couldn't close tranport")
             }
         }
     }

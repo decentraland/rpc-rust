@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
+use log::{error, debug};
 use protobuf::Message;
 use tokio::{
     select,
@@ -236,7 +237,7 @@ impl ClientRequestDispatcher {
         tokio::spawn(async move {
             select! {
                 _ = token.cancelled() => {
-                    println!("> ClientRequestDispatcher cancelled!")
+                    debug!("> ClientRequestDispatcher cancelled!")
                 },
                 _ = this.process() => {
 
@@ -263,13 +264,11 @@ impl ClientRequestDispatcher {
                             match sender.map(|sender| sender.send(data)) {
                                 Some(Ok(_)) => {}
                                 Some(Err(_)) => {
-                                    println!(
-                                        "> Client > Error on sending message through transport"
-                                    );
+                                    error!("> Client > Error on sending message through transport");
                                     continue;
                                 }
                                 None => {
-                                    println!(
+                                    debug!(
                                         "> Client > No callback registered for message {} response",
                                         message_header.1
                                     );
@@ -278,7 +277,7 @@ impl ClientRequestDispatcher {
                             }
                         }
                         None => {
-                            println!("> Client > Error on parsing message header");
+                            debug!("> Client > Error on parsing message header");
                             continue;
                         }
                     }
@@ -288,7 +287,7 @@ impl ClientRequestDispatcher {
                     continue;
                 }
                 Err(_) => {
-                    println!("Client error on receiving");
+                    error!("Client error on receiving");
                     break;
                 }
             }
@@ -302,7 +301,7 @@ impl ClientRequestDispatcher {
         let (payload, current_request_message_id) = {
             let mut message_lock = self.next_message_id.lock().await;
             let message_id = *message_lock;
-            println!("Message ID: {}", message_id);
+            debug!("Message ID: {}", message_id);
             let payload = cb(message_id);
             // store next_message_id
             *message_lock += 1;

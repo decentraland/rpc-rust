@@ -452,6 +452,7 @@ dependencies = [
  "async-trait",
  "futures-channel",
  "futures-util",
+ "log",
  "protobuf",
  "protoc-rust",
  "tokio",
