@@ -7,7 +7,7 @@ use tokio_tungstenite::{accept_async, tungstenite::Message, MaybeTlsStream, WebS
 
 use super::{Transport, TransportError, TransportEvent};
 use async_trait::async_trait;
-use log::debug;
+use log::{debug, error};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::Mutex,
@@ -46,15 +46,16 @@ impl WebSocketTransport {
 
     pub async fn listen(address: &str) -> Result<WebSocketTransport, TransportError> {
         // listen to given address
-        let listener = TcpListener::bind(address).await.expect("Can't listen");
+        let listener = TcpListener::bind(address)
+            .await
+            .map_err(|_| TransportError::Internal)?;
         debug!("Listening on: {}", address);
 
         // wait for a connection
         match listener.accept().await {
             Ok((stream, _)) => {
-                let peer = stream
-                    .peer_addr()
-                    .expect("connected streams should have a peer address");
+                let peer = stream.peer_addr().map_err(|_| TransportError::Internal)?;
+
                 debug!("Peer address: {}", peer);
                 let stream = MaybeTlsStream::Plain(stream);
                 let ws = accept_async(stream)
@@ -70,26 +71,28 @@ impl WebSocketTransport {
 #[async_trait]
 impl Transport for WebSocketTransport {
     async fn receive(&self) -> Result<TransportEvent, TransportError> {
-        while let Ok(next) = self.read.lock().await.try_next().await {
-            match next {
-                Some(message) => {
-                    if message.is_binary() {
-                        let message = message.into_data();
-                        if message.len() == 1 && message[0] == 0 && !self.is_connected() {
-                            self.ready.store(true, Ordering::SeqCst);
-                            return Ok(TransportEvent::Connect);
-                        }
-                        return Ok(TransportEvent::Message(message));
-                    } else {
-                        // Ignore messages that are not binary
-                        return Err(TransportError::Internal);
+        match self.read.lock().await.try_next().await {
+            Ok(Some(message)) => {
+                if message.is_binary() {
+                    let message = self.message_to_transport_event(message.into_data());
+                    if let TransportEvent::Connect = message {
+                        self.ready.store(true, Ordering::SeqCst);
                     }
-                }
-                None => {
-                    debug!("Nothing yet")
+                    return Ok(message);
+                } else {
+                    // Ignore messages that are not binary
+                    error!("Received message is not binary");
+                    return Err(TransportError::Internal);
                 }
             }
+            Ok(_) => {
+                debug!("Nothing yet")
+            }
+            _ => {
+                error!("Failed to receive message");
+            }
         }
+        debug!("Closing transport...");
         self.close().await;
         Ok(TransportEvent::Close)
     }

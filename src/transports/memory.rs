@@ -36,11 +36,11 @@ impl Transport for MemoryTransport {
     async fn receive(&self) -> Result<TransportEvent, TransportError> {
         match self.receiver.recv().await {
             Ok(event) => {
-                if event.len() == 1 && event[0] == 0 && !self.is_connected() {
+                let message = self.message_to_transport_event(event);
+                if let TransportEvent::Connect = message {
                     self.connected.store(true, Ordering::SeqCst);
-                    return Ok(TransportEvent::Connect);
                 }
-                Ok(TransportEvent::Message(event))
+                Ok(message)
             }
             Err(_) => {
                 self.close().await;
