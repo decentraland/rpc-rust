@@ -4,12 +4,17 @@ use integration::{
         server::BookServiceCodeGen,
     },
     service::book_service,
+    setup_quic::{configure_client, generate_self_signed_cert},
     Book, GetBookRequest, MyExampleContext,
 };
+use quinn::ServerConfig;
 use rpc_rust::{
     client::RpcClient,
     server::{RpcServer, RpcServerPort},
-    transports::{self, memory::MemoryTransport, web_socket::WebSocketTransport, Transport},
+    transports::{
+        self, memory::MemoryTransport, quic::QuicTransport, web_socket::WebSocketTransport,
+        Transport,
+    },
 };
 
 fn create_db() -> Vec<Book> {
@@ -48,6 +53,33 @@ async fn create_web_socket_transports() -> (WebSocketTransport, WebSocketTranspo
     (client, server)
 }
 
+async fn create_quic_transports() -> (QuicTransport, QuicTransport) {
+    let server_handle = tokio::spawn(async {
+        let (cert, keys) = generate_self_signed_cert();
+        QuicTransport::create_server(
+            "0.0.0.0:8080",
+            ServerConfig::with_single_cert(vec![cert], keys).expect("Can create server config"),
+        )
+        .await
+    });
+    let client_handle = tokio::spawn(async {
+        let client_config = configure_client();
+        QuicTransport::create_client("127.0.0.1:0", "127.0.0.1:8080", "localhost", client_config)
+            .await
+    });
+
+    let server = server_handle
+        .await
+        .expect("Thread to finish")
+        .expect("Server to accept client connection");
+
+    let client = client_handle
+        .await
+        .expect("Thread to finish")
+        .expect("Client to establish connection");
+    (client, server)
+}
+
 #[tokio::main]
 async fn main() {
     println!("--- Running example with Memory Transports ---");
@@ -55,6 +87,9 @@ async fn main() {
 
     println!("--- Running example with Web Socket Transports ---");
     run_with_transports(create_web_socket_transports().await).await;
+
+    println!("--- Running example with QUIC Transports ---");
+    run_with_transports(create_quic_transports().await).await;
 }
 
 async fn run_with_transports<T: Transport + Send + Sync + 'static>(

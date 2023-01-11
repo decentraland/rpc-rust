@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 
 pub mod memory;
+pub mod quic;
 pub mod web_socket;
 
 #[derive(Debug)]
