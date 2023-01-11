@@ -31,36 +31,22 @@ impl QuicTransport {
         server_name: &str,
         config: ClientConfig,
     ) -> Result<Self, TransportError> {
-        let server_address = server_address
-            .parse::<SocketAddr>()
-            .map_err(|_| TransportError::Internal)?;
-        let client_address = client_address
-            .parse::<SocketAddr>()
-            .map_err(|_| TransportError::Internal)?;
+        let server_address = server_address.parse::<SocketAddr>()?;
+        let client_address = client_address.parse::<SocketAddr>()?;
 
         // Bind this endpoint to a UDP socket on the given client address.
-        let mut endpoint =
-            Endpoint::client(client_address).map_err(|_| TransportError::Internal)?;
+        let mut endpoint = Endpoint::client(client_address)?;
         endpoint.set_default_client_config(config);
 
         // Connect to the server passing in the server name which is supposed to be in the server certificate.
-        let connection = endpoint
-            .connect(server_address, server_name)
-            .map_err(|_| TransportError::Internal)?
-            .await;
-        let connection = connection.map_err(|_| TransportError::Internal)?;
+        let connection = endpoint.connect(server_address, server_name)?.await?;
 
-        let bi_stream = connection
-            .open_bi()
-            .await
-            .map_err(|_| TransportError::Internal)?;
+        let bi_stream = connection.open_bi().await?;
         let (mut send, receiver) = bi_stream;
 
         // Opening a bidirectional stream is cheap, so server will not be notified until we send a
         // message!
-        send.write_all(b"hello!")
-            .await
-            .map_err(|_| TransportError::Internal)?;
+        send.write_all(b"hello!").await?;
 
         Ok(Self::new((send, receiver)))
     }
@@ -69,18 +55,13 @@ impl QuicTransport {
         address: &str,
         config: ServerConfig,
     ) -> Result<Self, TransportError> {
-        let address = address.parse::<SocketAddr>().unwrap();
+        let address = address.parse::<SocketAddr>()?;
 
         // Bind this endpoint to a UDP socket on the given server address.
-        let endpoint = Endpoint::server(config, address).map_err(|_| TransportError::Internal)?;
+        let endpoint = Endpoint::server(config, address)?;
 
         let connection = endpoint.accept().await.ok_or(TransportError::Internal)?;
-        let bi_stream = connection
-            .await
-            .map_err(|_| TransportError::Internal)?
-            .accept_bi()
-            .await
-            .map_err(|_| TransportError::Internal)?;
+        let bi_stream = connection.await?.accept_bi().await?;
         Ok(Self::new(bi_stream))
     }
 }
@@ -110,12 +91,7 @@ impl Transport for QuicTransport {
     }
 
     async fn send(&self, message: Vec<u8>) -> Result<(), TransportError> {
-        self.send
-            .lock()
-            .await
-            .write_all(&message)
-            .await
-            .map_err(|_| TransportError::Connection)?;
+        self.send.lock().await.write_all(&message).await?;
         Ok(())
     }
 
