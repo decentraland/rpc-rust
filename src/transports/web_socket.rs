@@ -36,9 +36,7 @@ impl WebSocketTransport {
     }
 
     pub async fn connect(address: &str) -> Result<WebSocketTransport, TransportError> {
-        let (ws, _) = connect_async(address)
-            .await
-            .map_err(|_| TransportError::Connection)?;
+        let (ws, _) = connect_async(address).await?;
         debug!("Connected to {}", address);
 
         Ok(Self::create(ws))
@@ -46,21 +44,17 @@ impl WebSocketTransport {
 
     pub async fn listen(address: &str) -> Result<WebSocketTransport, TransportError> {
         // listen to given address
-        let listener = TcpListener::bind(address)
-            .await
-            .map_err(|_| TransportError::Internal)?;
+        let listener = TcpListener::bind(address).await?;
         debug!("Listening on: {}", address);
 
         // wait for a connection
         match listener.accept().await {
             Ok((stream, _)) => {
-                let peer = stream.peer_addr().map_err(|_| TransportError::Internal)?;
+                let peer = stream.peer_addr()?;
 
                 debug!("Peer address: {}", peer);
                 let stream = MaybeTlsStream::Plain(stream);
-                let ws = accept_async(stream)
-                    .await
-                    .map_err(|_| TransportError::Internal)?;
+                let ws = accept_async(stream).await?;
                 Ok(Self::create(ws))
             }
             _ => Err(TransportError::Connection),
@@ -99,12 +93,7 @@ impl Transport for WebSocketTransport {
 
     async fn send(&self, message: Vec<u8>) -> Result<(), TransportError> {
         let message = Message::binary(message);
-        self.write
-            .lock()
-            .await
-            .send(message)
-            .await
-            .map_err(|_| TransportError::Connection)?;
+        self.write.lock().await.send(message).await?;
         Ok(())
     }
 
