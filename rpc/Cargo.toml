@@ -16,6 +16,8 @@ tokio-tungstenite = "*"
 log = "0.4.17"
 bytes = "1.3.0"
 prost = "0.11.5"
+quinn = "*"
+rustls = { version = "*", features = ["dangerous_configuration", "quic"] }
 
 [build-dependencies]
 prost-build = "0.11.5"
