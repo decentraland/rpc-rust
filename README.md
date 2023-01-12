@@ -4,10 +4,20 @@
 
 Install protoc binaries
 
-`brew install protobuf` | `sudo apt-get install protobuf-compiler`
+### MacOS
+```bash
+brew install protobuf
+```
 
-Install Just for commands
-`cargo install just`
+### Debian-based Linux
+```bash
+sudo apt-get install protobuf-compiler
+```
+
+### Install Just for commands
+```bash
+cargo install just
+```
 
 ## Build
 
