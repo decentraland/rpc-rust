@@ -23,7 +23,7 @@ impl BookServiceInterface<MyExampleContext> for BookService {
             .iter()
             .find(|book_record| book_record.isbn == request.isbn);
         println!(
-            "> BookService > async get_book {} > simulating DB operation",
+            "> BookService > async get_book {} > after simulating DB operation",
             request.isbn
         );
 
