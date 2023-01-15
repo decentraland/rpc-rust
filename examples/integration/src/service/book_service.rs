@@ -13,13 +13,19 @@ impl BookServiceInterface<MyExampleContext> for BookService {
         assert_eq!(ctx.hardcoded_database.len(), 2);
 
         // Simulate DB operation
-        println!("> BookService > async get_book > simulating DB operation");
-        sleep(Duration::from_secs(1)).await;
+        println!(
+            "> BookService > async get_book {} > simulating DB operation",
+            request.isbn
+        );
+        sleep(Duration::from_secs(2)).await;
         let book = ctx
             .hardcoded_database
             .iter()
             .find(|book_record| book_record.isbn == request.isbn);
-        println!("> BookService > async get_book > awaited DB operation");
+        println!(
+            "> BookService > async get_book {} > simulating DB operation",
+            request.isbn
+        );
 
         book.map(Book::clone).unwrap_or_default()
     }
