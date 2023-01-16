@@ -134,9 +134,7 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                     .await?;
                 let transport = transport.clone();
 
-                tokio::spawn(async move {
-                    Self::process_request(transport, message_identifier, procedure_handler).await
-                });
+                Self::process_request(transport, message_identifier, procedure_handler);
 
                 Ok(())
             }
@@ -144,7 +142,7 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
         }
     }
 
-    /// Receive a procedure handler future and process it.
+    /// Receive a procedure handler future and process it in another task.
     ///
     /// This function aims to run the procedure handler in another task to achieve processing requests concurrently.
     /// # Arguments
@@ -152,21 +150,23 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
     /// * `transport` - Cloned transport from `RpcServer`
     /// * `message_idenifier` - Message id to be sent in the response
     /// * `request_handler` - Procedure handler future to be executed
-    async fn process_request(
+    fn process_request(
         transport: Arc<dyn Transport + Send + Sync>,
         message_identifier: u32,
         request_handler: UnaryResponse,
     ) {
-        let procedure_response = request_handler.await;
-        let response = Response {
-            message_identifier: build_message_identifier(
-                RpcMessageTypes::Response as u32,
-                message_identifier,
-            ),
-            payload: procedure_response,
-        };
+        tokio::spawn(async move {
+            let procedure_response = request_handler.await;
+            let response = Response {
+                message_identifier: build_message_identifier(
+                    RpcMessageTypes::Response as u32,
+                    message_identifier,
+                ),
+                payload: procedure_response,
+            };
 
-        transport.send(response.encode_to_vec()).await.unwrap();
+            transport.send(response.encode_to_vec()).await.unwrap();
+        });
     }
 
     /// Handle the requests when a client wants to load a specific registered module and then starts calling the procedures
