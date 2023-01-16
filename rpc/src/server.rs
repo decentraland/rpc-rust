@@ -135,13 +135,37 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                 let transport = transport.clone();
 
                 tokio::spawn(async move {
-                    handle_request(transport, message_identifier, procedure_handler).await
+                    Self::process_request(transport, message_identifier, procedure_handler).await
                 });
 
                 Ok(())
             }
             _ => Err(ServerError::PortNotFound),
         }
+    }
+
+    /// Receive a procedure handler future and process it
+    ///
+    /// # Arguments
+    ///
+    /// * `transport` - Cloned transport from `RpcServer`
+    /// * `message_idenifier` - Message id to be sent in the response
+    /// * `request_handler` - Procedure handler future to be executed
+    async fn process_request(
+        transport: Arc<dyn Transport + Send + Sync>,
+        message_identifier: u32,
+        request_handler: UnaryResponse,
+    ) {
+        let procedure_response = request_handler.await;
+        let response = Response {
+            message_identifier: build_message_identifier(
+                RpcMessageTypes::Response as u32,
+                message_identifier,
+            ),
+            payload: procedure_response,
+        };
+
+        transport.send(response.encode_to_vec()).await.unwrap();
     }
 
     /// Handle the requests when a client wants to load a specific registered module and then starts calling the procedures
@@ -380,21 +404,4 @@ impl<Context> RpcServerPort<Context> {
             _ => Err(ServerError::ProcedureError),
         }
     }
-}
-
-async fn handle_request(
-    transport: Arc<dyn Transport + Send + Sync>,
-    message_identifier: u32,
-    request_handler: UnaryResponse,
-) {
-    let procedure_response = request_handler.await;
-    let response = Response {
-        message_identifier: build_message_identifier(
-            RpcMessageTypes::Response as u32,
-            message_identifier,
-        ),
-        payload: procedure_response,
-    };
-
-    transport.send(response.encode_to_vec()).await.unwrap();
 }
