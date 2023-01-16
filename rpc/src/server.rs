@@ -144,8 +144,9 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
         }
     }
 
-    /// Receive a procedure handler future and process it
+    /// Receive a procedure handler future and process it.
     ///
+    /// This function aims to run the procedure handler in another task to achieve processing requests concurrently.
     /// # Arguments
     ///
     /// * `transport` - Cloned transport from `RpcServer`
