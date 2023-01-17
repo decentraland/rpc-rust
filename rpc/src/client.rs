@@ -1,22 +1,17 @@
 use std::{collections::HashMap, sync::Arc};
 
-use log::{error, debug};
+use log::debug;
 use prost::Message;
-use tokio::{
-    select,
-    sync::{
-        oneshot::{self, Sender},
-        Mutex,
-    },
-};
-use tokio_util::sync::CancellationToken;
+use tokio::sync::{oneshot, Mutex};
 
 use crate::{
+    messages_handlers::ClientMessagesHandler,
     protocol::{
-        parse::{build_message_identifier, parse_header, parse_protocol_message},
+        parse::{build_message_identifier, parse_protocol_message},
         CreatePort, CreatePortResponse, Request, RequestModule, RequestModuleResponse, Response,
         RpcMessageTypes,
     },
+    stream_protocol::{Stream, StreamProtocol},
     transports::{Transport, TransportEvent},
 };
 
@@ -44,10 +39,9 @@ pub struct RpcClient {
 impl RpcClient {
     pub async fn new<T: Transport + Send + Sync + 'static>(transport: T) -> ClientResult<Self> {
         let transport = Self::establish_connection(transport).await?;
-        let transport = Box::new(transport);
 
         let client_request_dispatcher = Arc::new(ClientRequestDispatcher::new(transport));
-        client_request_dispatcher.clone().start();
+        client_request_dispatcher.start();
 
         Ok(Self::from_dispatcher(client_request_dispatcher))
     }
@@ -180,13 +174,47 @@ impl RpcClientModule {
         procedure_name: &str,
         payload: M,
     ) -> ClientResult<ReturnType> {
+        let response: (u32, u32, Response) = self.call_procedure(procedure_name, payload).await?;
+
+        let returned_type = ReturnType::decode(response.2.payload.as_slice())
+            .map_err(|_| ClientError::ProtocolError)?;
+
+        Ok(returned_type)
+    }
+
+    pub async fn call_server_streams_procedure<
+        M: Message,
+        ReturnType: Message + Default + 'static,
+    >(
+        &self,
+        procedure_name: &str,
+        payload: M,
+    ) -> ClientResult<Stream<ReturnType>> {
+        let response: (u32, u32, Response) = self.call_procedure(procedure_name, payload).await?;
+        let stream_protocol = self
+            .client_request_dispatcher
+            .stream_server_messages(self.port_id, response.1)
+            .await;
+
+        if let Err(_) = stream_protocol.acknowledge_open().await {
+            return Err(ClientError::TransportError);
+        }
+
+        Ok(stream_protocol)
+    }
+
+    async fn call_procedure<M: Message, ReturnType: Message + Default>(
+        &self,
+        procedure_name: &str,
+        payload: M,
+    ) -> ClientResult<(u32, u32, ReturnType)> {
         let procedure_id = self.procedures.get(procedure_name);
         if procedure_id.is_none() {
             return Err(ClientError::ProcedureNotFound);
         }
         let procedure_id = procedure_id.unwrap().to_owned();
         let payload = payload.encode_to_vec();
-        let response: (u32, u32, Response) = self
+        let response: (u32, u32, ReturnType) = self
             .client_request_dispatcher
             .request(|message_id| Request {
                 port_id: self.port_id,
@@ -199,91 +227,29 @@ impl RpcClientModule {
             })
             .await?;
 
-        let returned_type = ReturnType::decode(response.2.payload.as_slice())
-            .map_err(|_| ClientError::ProtocolError)?;
-
-        Ok(returned_type)
+        Ok(response)
     }
 }
 
 struct ClientRequestDispatcher {
     next_message_id: Mutex<u32>,
-    transport: Box<dyn Transport + Send + Sync>,
-    one_time_listeners: Mutex<HashMap<u32, oneshot::Sender<Vec<u8>>>>,
-    process_cancellation_token: CancellationToken,
+    client_messages_handler: Arc<ClientMessagesHandler>,
 }
 
 impl ClientRequestDispatcher {
-    pub fn new(transport: Box<dyn Transport + Send + Sync>) -> Self {
+    pub fn new<T: Transport + Send + Sync + 'static>(transport: T) -> Self {
         Self {
             next_message_id: Mutex::new(1),
-            transport,
-            one_time_listeners: Mutex::new(HashMap::new()),
-            process_cancellation_token: CancellationToken::new(),
+            client_messages_handler: Arc::new(ClientMessagesHandler::new(Arc::new(transport))),
         }
     }
 
-    fn start(self: Arc<Self>) {
-        let this = self.clone();
-        let token = self.process_cancellation_token.clone();
-        tokio::spawn(async move {
-            select! {
-                _ = token.cancelled() => {
-                    debug!("> ClientRequestDispatcher cancelled!")
-                },
-                _ = this.process() => {
-
-                }
-            }
-        });
+    fn start(&self) {
+        self.client_messages_handler.clone().start();
     }
 
     fn stop(&self) {
-        self.process_cancellation_token.cancel();
-    }
-
-    async fn process(&self) {
-        loop {
-            match self.transport.receive().await {
-                Ok(TransportEvent::Message(data)) => {
-                    let message_header = parse_header(&data);
-                    // TODO: find a way to communicate the error of parsing the message_header
-                    match message_header {
-                        Some(message_header) => {
-                            let mut read_callbacks = self.one_time_listeners.lock().await;
-                            // We remove the listener in order to get a owned value and also remove it from memory
-                            let sender = read_callbacks.remove(&message_header.1);
-                            match sender.map(|sender| sender.send(data)) {
-                                Some(Ok(_)) => {}
-                                Some(Err(_)) => {
-                                    error!("> Client > Error on sending message through transport");
-                                    continue;
-                                }
-                                None => {
-                                    debug!(
-                                        "> Client > No callback registered for message {} response",
-                                        message_header.1
-                                    );
-                                    continue;
-                                }
-                            }
-                        }
-                        None => {
-                            debug!("> Client > Error on parsing message header");
-                            continue;
-                        }
-                    }
-                }
-                Ok(_) => {
-                    // Ignore another type of TransportEvent
-                    continue;
-                }
-                Err(_) => {
-                    error!("Client error on receiving");
-                    break;
-                }
-            }
-        }
+        self.client_messages_handler.stop()
     }
 
     pub async fn request<
@@ -305,14 +271,16 @@ impl ClientRequestDispatcher {
         }; // Force to drop the mutex for other conccurrent operations
 
         let payload = payload.encode_to_vec();
-        self.transport
+        self.client_messages_handler
+            .transport
             .send(payload)
             .await
             .map_err(|_| ClientError::TransportError)?;
 
         let (tx, rx) = oneshot::channel::<Vec<u8>>();
 
-        self.register_one_time_listener(current_request_message_id, tx)
+        self.client_messages_handler
+            .register_one_time_listener(current_request_message_id, tx)
             .await;
 
         let response = rx.await.map_err(|_| ClientError::TransportError)?;
@@ -323,8 +291,23 @@ impl ClientRequestDispatcher {
         }
     }
 
-    async fn register_one_time_listener(&self, message_id: u32, callback: Sender<Vec<u8>>) {
-        let mut lock = self.one_time_listeners.lock().await;
-        lock.insert(message_id, callback);
+    async fn stream_server_messages<M: Message + Default + 'static>(
+        &self,
+        port_id: u32,
+        message_id: u32,
+    ) -> Stream<M> {
+        let (stream_protocol, listener) = StreamProtocol::create(
+            self.client_messages_handler.transport.clone(),
+            port_id,
+            message_id,
+        );
+
+        self.client_messages_handler
+            .register_listener(message_id, listener)
+            .await;
+
+        stream_protocol.start_processing();
+
+        Stream(stream_protocol)
     }
 }
