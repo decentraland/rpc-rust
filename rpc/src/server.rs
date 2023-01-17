@@ -165,7 +165,12 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                 payload: procedure_response,
             };
 
-            transport.send(response.encode_to_vec()).await.unwrap();
+            match transport.send(response.encode_to_vec()).await {
+                Ok(_) => {}
+                Err(err) => {
+                    error!("Error while sending the response to request {message_identifier} - error: {err:?}")
+                }
+            }
         });
     }
 
