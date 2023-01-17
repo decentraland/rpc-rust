@@ -5,7 +5,7 @@ use integration::{
     },
     service::book_service,
     setup_quic::{configure_client, generate_self_signed_cert},
-    Book, GetBookRequest, MyExampleContext,
+    Book, GetBookRequest, MyExampleContext, QueryBooksRequest,
 };
 use quinn::ServerConfig;
 use rpc_rust::{
@@ -30,7 +30,25 @@ fn create_db() -> Vec<Book> {
         title: "Rust: how do futures work under the hood?".to_string(),
         isbn: 1010,
     };
-    vec![book_1, book_2]
+
+    let book_3 = Book {
+        author: "mr robot".to_string(),
+        title: "Create a robot from scrath".to_string(),
+        isbn: 1020,
+    };
+
+    let book_4 = Book {
+        author: "vitalik".to_string(),
+        title: "Blockchain 101".to_string(),
+        isbn: 1040,
+    };
+
+    let book_5 = Book {
+        author: "buterin".to_string(),
+        title: "Smart Contracts 101".to_string(),
+        isbn: 1050,
+    };
+    vec![book_1, book_2, book_3, book_4, book_5]
 }
 
 fn create_memory_transports() -> (MemoryTransport, MemoryTransport) {
@@ -99,6 +117,7 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
     let client_handle = tokio::spawn(async move {
         let mut client = RpcClient::new(client_transport).await.unwrap();
 
+        println!("> Creating Port");
         let client_port = match client.create_port("TEST_PORT").await {
             Ok(port) => {
                 println!(
@@ -114,22 +133,26 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
         };
 
         assert_eq!(client_port.port_name, "TEST_PORT");
+        println!("> Port created");
 
+        println!("> Calling load module");
         let book_service_module = client_port
             .load_module::<BookServiceClient>("BookService")
             .await
             .unwrap();
 
+        println!("> Unary > GetBook");
+
         let get_book_payload = GetBookRequest { isbn: 1000 };
         let response = book_service_module.get_book(get_book_payload).await;
 
-        println!("> Got Book: {:?}", response);
+        println!("> Unary > Got Book: {:?}", response);
 
         assert_eq!(response.isbn, 1000);
         assert_eq!(response.title, "Rust: crash course");
         assert_eq!(response.author, "mr steve");
 
-        println!("> Concurrent Example <");
+        println!("> GetBook: Concurrent Example");
 
         let get_book_payload = GetBookRequest { isbn: 1000 };
         let get_book_payload_2 = GetBookRequest { isbn: 1010 };
@@ -138,6 +161,18 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
             book_service_module.get_book(get_book_payload),
             book_service_module.get_book(get_book_payload_2)
         );
+
+        println!("> Server Streams > QueryBooks");
+
+        let query_books_payload = QueryBooksRequest {
+            author_prefix: "mr".to_string(),
+        };
+
+        let mut response = book_service_module.query_books(query_books_payload).await;
+
+        while let Some(book) = response.next().await {
+            println!("> Server Streams > QueryBooks > Book {:?}", book)
+        }
     });
 
     let server_handle = tokio::spawn(async {
