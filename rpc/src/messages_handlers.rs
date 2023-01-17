@@ -345,4 +345,9 @@ impl ClientMessagesHandler {
         let mut lock = self.listeners.lock().await;
         lock.insert(message_id, callback);
     }
+
+    pub async fn unregister_listener(&self, message_id: u32) {
+        let mut lock = self.listeners.lock().await;
+        lock.remove(&message_id);
+    }
 }

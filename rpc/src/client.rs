@@ -306,7 +306,13 @@ impl ClientRequestDispatcher {
             .register_listener(message_id, listener)
             .await;
 
-        stream_protocol.start_processing();
+        let client_messages_handler_listener_removal = self.client_messages_handler.clone();
+        stream_protocol.start_processing(move || async move {
+            // Callback for remove listener
+            client_messages_handler_listener_removal
+                .unregister_listener(message_id)
+                .await;
+        });
 
         Stream(stream_protocol)
     }

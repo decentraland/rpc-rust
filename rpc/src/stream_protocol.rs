@@ -1,4 +1,5 @@
 use std::{
+    future::Future,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
@@ -123,17 +124,23 @@ impl<M: Message + Default + 'static> StreamProtocol<M> {
         self.process_cancellation_token.cancel();
     }
 
-    pub fn start_processing(&self) {
+    pub(crate) fn start_processing<F: Future + Send, Callback: FnOnce() -> F + Send + 'static>(
+        &self,
+        callback: Callback,
+    ) {
         let token = self.process_cancellation_token.clone();
         let messages_processor = self.messages_processor.clone();
         let internal_channel = (self.channel.0.clone(), self.channel.1.clone());
         tokio::spawn(async move {
+            let token_cloned = token.clone();
             select! {
                 _ = token.cancelled() => {
-                    debug!("> StreamProtocol cancelled!")
+                    debug!("> StreamProtocol cancelled!");
+                    callback().await;
+                    // TOOD: Communicate error
                 },
-                _ = Self::process_messages(messages_processor, internal_channel) => {
-
+                _ = Self::process_messages(messages_processor, internal_channel, token_cloned) => {
+                    callback().await;
                 }
             }
         });
@@ -142,15 +149,20 @@ impl<M: Message + Default + 'static> StreamProtocol<M> {
     async fn process_messages(
         messages_processor: AsyncChannelReceiver<(RpcMessageTypes, u32, StreamMessage)>,
         internal_channel: (AsyncChannelSender<M>, AsyncChannelReceiver<M>),
+        cancellation_token: CancellationToken,
     ) {
         while let Ok(message) = messages_processor.recv().await {
             if matches!(message.0, RpcMessageTypes::StreamMessage) {
                 if message.2.closed {
                     internal_channel.1.close();
+                    messages_processor.close();
                 } else {
                     let decoded = M::decode(message.2.payload.as_slice()).unwrap();
                     internal_channel.0.send(decoded).await.unwrap();
                 }
+            } else if matches!(message.0, RpcMessageTypes::RemoteErrorResponse) {
+                cancellation_token.cancel();
+                // TOOD: Communicate error
             }
         }
     }
