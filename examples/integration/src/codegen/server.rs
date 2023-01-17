@@ -70,6 +70,7 @@ impl BookServiceCodeGen {
                 rx
             })
         });
+
         port.register_module(SERVICE.to_string(), service_def)
     }
 }
