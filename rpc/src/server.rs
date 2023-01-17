@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc, u8};
 
-use log::{error, debug};
+use log::{debug, error};
 use prost::{alloc::vec::Vec, Message};
 
 use crate::{
@@ -12,7 +12,7 @@ use crate::{
     transports::{Transport, TransportEvent},
     types::{
         ServerModuleDeclaration, ServerModuleProcedures, ServiceModuleDefinition,
-        UnaryRequestHandler,
+        UnaryRequestHandler, UnaryResponse,
     },
 };
 
@@ -40,7 +40,7 @@ pub enum ServerError {
 /// for the port creation.
 pub struct RpcServer<Context> {
     /// The Transport used for the communication between `RpcClient` and `RpcServer`
-    transport: Option<Box<dyn Transport + Send + Sync>>,
+    transport: Option<Arc<dyn Transport + Send + Sync>>,
     /// The handler executed when a new port is created
     handler: Option<Box<PortHandlerFn<Context>>>,
     /// Ports registered in the `RpcServer`
@@ -48,7 +48,7 @@ pub struct RpcServer<Context> {
     /// RpcServer Context
     context: Arc<Context>,
 }
-impl<Context> RpcServer<Context> {
+impl<Context: Send + Sync + 'static> RpcServer<Context> {
     pub fn create(ctx: Context) -> Self {
         Self {
             transport: None,
@@ -60,7 +60,7 @@ impl<Context> RpcServer<Context> {
 
     /// Attach the server half of the transport for Client<>Server comms
     pub fn attach_transport<T: Transport + Send + Sync + 'static>(&mut self, transport: T) {
-        self.transport = Some(Box::new(transport));
+        self.transport = Some(Arc::new(transport));
     }
 
     /// Start listening messages from the attached transport
@@ -129,26 +129,49 @@ impl<Context> RpcServer<Context> {
         match self.ports.get(&request.port_id) {
             Some(port) => {
                 let procedure_ctx = self.context.clone();
-                let procedure_response = port
-                    .call_procedure(request.procedure_id, request.payload, procedure_ctx)
+                let procedure_handler = port
+                    .get_procedure(request.procedure_id, request.payload, procedure_ctx)
                     .await?;
+                let transport = transport.clone();
 
-                let response = Response {
-                    message_identifier: build_message_identifier(
-                        RpcMessageTypes::Response as u32,
-                        message_identifier,
-                    ),
-                    payload: procedure_response,
-                };
+                Self::process_request(transport, message_identifier, procedure_handler);
 
-                transport
-                    .send(response.encode_to_vec())
-                    .await
-                    .map_err(|_| ServerError::TransportError)?;
                 Ok(())
             }
             _ => Err(ServerError::PortNotFound),
         }
+    }
+
+    /// Receive a procedure handler future and process it in another task.
+    ///
+    /// This function aims to run the procedure handler in another task to achieve processing requests concurrently.
+    /// # Arguments
+    ///
+    /// * `transport` - Cloned transport from `RpcServer`
+    /// * `message_idenifier` - Message id to be sent in the response
+    /// * `request_handler` - Procedure handler future to be executed
+    fn process_request(
+        transport: Arc<dyn Transport + Send + Sync>,
+        message_identifier: u32,
+        request_handler: UnaryResponse,
+    ) {
+        tokio::spawn(async move {
+            let procedure_response = request_handler.await;
+            let response = Response {
+                message_identifier: build_message_identifier(
+                    RpcMessageTypes::Response as u32,
+                    message_identifier,
+                ),
+                payload: procedure_response,
+            };
+
+            match transport.send(response.encode_to_vec()).await {
+                Ok(_) => {}
+                Err(err) => {
+                    error!("Error while sending the response to request {message_identifier} - error: {err:?}")
+                }
+            }
+        });
     }
 
     /// Handle the requests when a client wants to load a specific registered module and then starts calling the procedures
@@ -185,7 +208,7 @@ impl<Context> RpcServer<Context> {
                         RpcMessageTypes::RequestModuleResponse as u32,
                         message_identifier,
                     ),
-                    procedures
+                    procedures,
                 };
                 let response = response.encode_to_vec();
                 transport
@@ -375,15 +398,15 @@ impl<Context> RpcServerPort<Context> {
         }
     }
 
-    /// It will look up the procedure id in the port's `procedures` and execute the procedure's handler
-    async fn call_procedure(
+    /// It will look up the procedure id in the port's `procedures` and return the procedure's handler
+    async fn get_procedure(
         &self,
         procedure_id: u32,
         payload: Vec<u8>,
         context: Arc<Context>,
-    ) -> ServerResult<Vec<u8>> {
+    ) -> ServerResult<UnaryResponse> {
         match self.procedures.get(&procedure_id) {
-            Some(procedure_handler) => Ok(procedure_handler(payload, context).await),
+            Some(procedure_handler) => Ok(procedure_handler(payload, context)),
             _ => Err(ServerError::ProcedureError),
         }
     }

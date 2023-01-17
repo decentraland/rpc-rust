@@ -16,6 +16,7 @@ use rpc_rust::{
         Transport,
     },
 };
+use tokio::join;
 
 fn create_db() -> Vec<Book> {
     let book_1 = Book {
@@ -27,7 +28,7 @@ fn create_db() -> Vec<Book> {
     let book_2 = Book {
         author: "mr jobs".to_string(),
         title: "Rust: how do futures work under the hood?".to_string(),
-        isbn: 1000,
+        isbn: 1010,
     };
     vec![book_1, book_2]
 }
@@ -120,7 +121,6 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
             .unwrap();
 
         let get_book_payload = GetBookRequest { isbn: 1000 };
-
         let response = book_service_module.get_book(get_book_payload).await;
 
         println!("> Got Book: {:?}", response);
@@ -128,6 +128,16 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
         assert_eq!(response.isbn, 1000);
         assert_eq!(response.title, "Rust: crash course");
         assert_eq!(response.author, "mr steve");
+
+        println!("> Concurrent Example <");
+
+        let get_book_payload = GetBookRequest { isbn: 1000 };
+        let get_book_payload_2 = GetBookRequest { isbn: 1010 };
+
+        join!(
+            book_service_module.get_book(get_book_payload),
+            book_service_module.get_book(get_book_payload_2)
+        );
     });
 
     let server_handle = tokio::spawn(async {
