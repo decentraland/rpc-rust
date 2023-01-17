@@ -233,23 +233,23 @@ impl RpcClientModule {
 
 struct ClientRequestDispatcher {
     next_message_id: Mutex<u32>,
-    client_messages_handler: Arc<ClientMessagesHandler>,
+    messages_handler: Arc<ClientMessagesHandler>,
 }
 
 impl ClientRequestDispatcher {
     pub fn new<T: Transport + Send + Sync + 'static>(transport: T) -> Self {
         Self {
             next_message_id: Mutex::new(1),
-            client_messages_handler: Arc::new(ClientMessagesHandler::new(Arc::new(transport))),
+            messages_handler: Arc::new(ClientMessagesHandler::new(Arc::new(transport))),
         }
     }
 
     fn start(&self) {
-        self.client_messages_handler.clone().start();
+        self.messages_handler.clone().start();
     }
 
     fn stop(&self) {
-        self.client_messages_handler.stop()
+        self.messages_handler.stop()
     }
 
     pub async fn request<
@@ -271,7 +271,7 @@ impl ClientRequestDispatcher {
         }; // Force to drop the mutex for other conccurrent operations
 
         let payload = payload.encode_to_vec();
-        self.client_messages_handler
+        self.messages_handler
             .transport
             .send(payload)
             .await
@@ -279,7 +279,7 @@ impl ClientRequestDispatcher {
 
         let (tx, rx) = oneshot::channel::<Vec<u8>>();
 
-        self.client_messages_handler
+        self.messages_handler
             .register_one_time_listener(current_request_message_id, tx)
             .await;
 
@@ -296,17 +296,14 @@ impl ClientRequestDispatcher {
         port_id: u32,
         message_id: u32,
     ) -> Stream<M> {
-        let (stream_protocol, listener) = StreamProtocol::create(
-            self.client_messages_handler.transport.clone(),
-            port_id,
-            message_id,
-        );
+        let (stream_protocol, listener) =
+            StreamProtocol::create(self.messages_handler.transport.clone(), port_id, message_id);
 
-        self.client_messages_handler
+        self.messages_handler
             .register_listener(message_id, listener)
             .await;
 
-        let client_messages_handler_listener_removal = self.client_messages_handler.clone();
+        let client_messages_handler_listener_removal = self.messages_handler.clone();
         stream_protocol.start_processing(move || async move {
             // Callback for remove listener
             client_messages_handler_listener_removal
