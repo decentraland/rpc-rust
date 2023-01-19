@@ -68,9 +68,9 @@ impl BookServiceCodeGen {
             })
         });
 
-        let serv = Arc::clone(&shareable_service);
+        let service = Arc::clone(&shareable_service);
         service_def.add_client_streams("GetBookStream", move |request, context| {
-            let serv = serv.clone();
+            let serv = service.clone();
             Box::pin(async move {
                 let generator = Generator::from_generator(request, |item| {
                     GetBookRequest::decode(item.as_slice()).unwrap()
