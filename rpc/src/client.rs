@@ -11,7 +11,7 @@ use crate::{
         CreatePort, CreatePortResponse, Request, RequestModule, RequestModuleResponse, Response,
         RpcMessageTypes,
     },
-    stream_protocol::{Stream, StreamProtocol},
+    stream_protocol::{Generator, StreamProtocol},
     transports::{Transport, TransportEvent},
 };
 
@@ -183,24 +183,57 @@ impl RpcClientModule {
     }
 
     pub async fn call_server_streams_procedure<
-        M: Message,
+        M: Message + Default + 'static,
         ReturnType: Message + Default + 'static,
     >(
         &self,
         procedure_name: &str,
         payload: M,
-    ) -> ClientResult<Stream<ReturnType>> {
+    ) -> ClientResult<Generator<ReturnType>> {
         let response: (u32, u32, Response) = self.call_procedure(procedure_name, payload).await?;
         let stream_protocol = self
             .client_request_dispatcher
             .stream_server_messages(self.port_id, response.1)
+            .await?;
+
+        let generator =
+            stream_protocol.to_generator(|item| ReturnType::decode(item.as_slice()).unwrap());
+
+        Ok(generator)
+    }
+
+    pub async fn call_client_streams_procedure<
+        ReturnType: Message + Default,
+        M: Message + 'static,
+    >(
+        &self,
+        procedure_name: &str,
+        stream: Generator<M>,
+    ) -> ClientResult<ReturnType> {
+        let client_message_id = self.client_request_dispatcher.next_message_id().await;
+        self.client_request_dispatcher
+            .send_client_streams(self.port_id, client_message_id, stream)
             .await;
 
-        if (stream_protocol.acknowledge_open().await).is_err() {
-            return Err(ClientError::TransportError);
-        }
+        let procedure_id = self.get_procedure_id(procedure_name)?;
+        let response: (u32, u32, Response) = self
+            .client_request_dispatcher
+            .request(|message_id| Request {
+                port_id: self.port_id,
+                message_identifier: build_message_identifier(
+                    RpcMessageTypes::Request as u32,
+                    message_id,
+                ),
+                procedure_id,
+                payload: vec![],
+                client_stream: client_message_id,
+            })
+            .await?;
 
-        Ok(stream_protocol)
+        let returned_type = ReturnType::decode(response.2.payload.as_slice())
+            .map_err(|_| ClientError::ProtocolError)?;
+
+        Ok(returned_type)
     }
 
     async fn call_procedure<M: Message, ReturnType: Message + Default>(
@@ -208,11 +241,7 @@ impl RpcClientModule {
         procedure_name: &str,
         payload: M,
     ) -> ClientResult<(u32, u32, ReturnType)> {
-        let procedure_id = self.procedures.get(procedure_name);
-        if procedure_id.is_none() {
-            return Err(ClientError::ProcedureNotFound);
-        }
-        let procedure_id = procedure_id.unwrap().to_owned();
+        let procedure_id = self.get_procedure_id(procedure_name)?;
         let payload = payload.encode_to_vec();
         let response: (u32, u32, ReturnType) = self
             .client_request_dispatcher
@@ -224,10 +253,19 @@ impl RpcClientModule {
                 ),
                 procedure_id,
                 payload,
+                client_stream: 0,
             })
             .await?;
 
         Ok(response)
+    }
+
+    fn get_procedure_id(&self, procedure_name: &str) -> ClientResult<u32> {
+        let procedure_id = self.procedures.get(procedure_name);
+        if procedure_id.is_none() {
+            return Err(ClientError::ProcedureNotFound);
+        }
+        Ok(procedure_id.unwrap().to_owned())
     }
 }
 
@@ -252,7 +290,14 @@ impl ClientRequestDispatcher {
         self.messages_handler.stop()
     }
 
-    pub async fn request<
+    async fn next_message_id(&self) -> u32 {
+        let mut lock = self.next_message_id.lock().await;
+        let message_id = *lock;
+        *lock += 1;
+        message_id
+    }
+
+    async fn request<
         ReturnType: Message + Default,
         M: Message + Default,
         Callback: FnOnce(u32) -> M,
@@ -261,12 +306,9 @@ impl ClientRequestDispatcher {
         cb: Callback,
     ) -> ClientResult<(u32, u32, ReturnType)> {
         let (payload, current_request_message_id) = {
-            let mut message_lock = self.next_message_id.lock().await;
-            let message_id = *message_lock;
+            let message_id = self.next_message_id().await;
             debug!("Message ID: {}", message_id);
             let payload = cb(message_id);
-            // store next_message_id
-            *message_lock += 1;
             (payload, message_id)
         }; // Force to drop the mutex for other concurrent operations
 
@@ -291,26 +333,53 @@ impl ClientRequestDispatcher {
         }
     }
 
-    async fn stream_server_messages<M: Message + Default + 'static>(
+    async fn stream_server_messages(
         &self,
         port_id: u32,
         message_id: u32,
-    ) -> Stream<M> {
-        let (stream_protocol, listener) =
-            StreamProtocol::create(self.messages_handler.transport.clone(), port_id, message_id);
-
-        self.messages_handler
-            .register_listener(message_id, listener)
-            .await;
+    ) -> ClientResult<StreamProtocol> {
+        let stream_protocol =
+            StreamProtocol::new(self.messages_handler.transport.clone(), port_id, message_id);
 
         let client_messages_handler_listener_removal = self.messages_handler.clone();
-        stream_protocol.start_processing(move || async move {
-            // Callback for remove listener
-            client_messages_handler_listener_removal
-                .unregister_listener(message_id)
-                .await;
-        });
+        match stream_protocol
+            .start_processing(move || async move {
+                // Callback for remove listener
+                client_messages_handler_listener_removal
+                    .unregister_listener(message_id)
+                    .await;
+            })
+            .await
+        {
+            Ok(listener) => {
+                self.messages_handler
+                    .register_listener(message_id, listener)
+                    .await;
+                Ok(stream_protocol)
+            }
+            Err(_) => Err(ClientError::TransportError),
+        }
+    }
 
-        Stream(stream_protocol)
+    async fn send_client_streams<M: Message + 'static>(
+        &self,
+        port_id: u32,
+        client_message_id: u32,
+        client_stream: Generator<M>,
+    ) {
+        let (open_resolver, open_promise) = oneshot::channel::<Vec<u8>>();
+        self.messages_handler
+            .register_one_time_listener(client_message_id, open_resolver)
+            .await;
+
+        // Not need to await, run in background
+        self.messages_handler
+            .clone()
+            .await_server_ack_open_and_send_streams(
+                open_promise,
+                client_stream,
+                port_id,
+                client_message_id,
+            );
     }
 }

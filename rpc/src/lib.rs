@@ -5,3 +5,9 @@ pub mod server;
 pub mod stream_protocol;
 pub mod transports;
 pub mod types;
+
+pub enum CommonError {
+    ProtocolError,
+    TransportError,
+    TransportNotAttached,
+}
