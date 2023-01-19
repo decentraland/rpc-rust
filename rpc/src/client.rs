@@ -310,7 +310,7 @@ impl ClientRequestDispatcher {
             debug!("Message ID: {}", message_id);
             let payload = cb(message_id);
             (payload, message_id)
-        }; // Force to drop the mutex for other concurrent operations
+        };
 
         let payload = payload.encode_to_vec();
         self.messages_handler
