@@ -11,6 +11,7 @@ use quinn::ServerConfig;
 use rpc_rust::{
     client::RpcClient,
     server::{RpcServer, RpcServerPort},
+    stream_protocol::Generator,
     transports::{
         self, memory::MemoryTransport, quic::QuicTransport, web_socket::WebSocketTransport,
         Transport,
@@ -141,12 +142,12 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
             .await
             .unwrap();
 
-        println!("> Unary > GetBook");
+        println!("> Book Service > Unary > GetBook");
 
         let get_book_payload = GetBookRequest { isbn: 1000 };
         let response = book_service_module.get_book(get_book_payload).await;
 
-        println!("> Unary > Got Book: {:?}", response);
+        println!("> Book Service > Unary > Response: {:?}", response);
 
         assert_eq!(response.isbn, 1000);
         assert_eq!(response.title, "Rust: crash course");
@@ -162,7 +163,7 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
             book_service_module.get_book(get_book_payload_2)
         );
 
-        println!("> Server Streams > QueryBooks");
+        println!("> Book Service > Server Streams > QueryBooks");
 
         let query_books_payload = QueryBooksRequest {
             author_prefix: "mr".to_string(),
@@ -170,9 +171,26 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
 
         let mut response_stream = book_service_module.query_books(query_books_payload).await;
 
-        while let Some(book) = response_stream.next().await {
-            println!("> Server Streams > QueryBooks > Book {:?}", book)
+        while let Some(book) = response.next().await {
+            println!(
+                "> Book Service > Server Streams > QueryBooks > Response {:?}",
+                book
+            )
         }
+
+        println!("> Book Service > Client Streams > Get Book Stream");
+        let (generator, generator_yielder) = Generator::create();
+        tokio::spawn(async move {
+            for _ in 0..4 {
+                generator_yielder
+                    .insert(GetBookRequest { isbn: 1000 })
+                    .await
+                    .unwrap();
+            }
+        });
+        let response = book_service_module.get_book_stream(generator).await;
+
+        println!("> Book Service > Client Streams > Get Book Stream > Response {response:?}");
     });
 
     let server_handle = tokio::spawn(async {

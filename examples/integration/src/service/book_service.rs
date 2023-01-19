@@ -1,12 +1,11 @@
 use crate::{
-    codegen::ServerStreamResponse, Book, GetBookRequest, MyExampleContext, QueryBooksRequest,
+    codegen::{ClientStreamRequest, ServerStreamResponse},
+    Book, GetBookRequest, MyExampleContext, QueryBooksRequest,
 };
 use std::{sync::Arc, time::Duration};
 
-use tokio::{
-    sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-    time::sleep,
-};
+use rpc_rust::stream_protocol::Generator;
+use tokio::time::sleep;
 
 use crate::codegen::server::BookServiceInterface;
 
@@ -41,17 +40,27 @@ impl BookServiceInterface<MyExampleContext> for BookService {
         ctx: Arc<MyExampleContext>,
     ) -> ServerStreamResponse<Book> {
         println!("> BookService > server stream > QueryBooks");
-        let (tx, rx): (UnboundedSender<Book>, UnboundedReceiver<Book>) = unbounded_channel();
+        let (generator, generator_yielder) = Generator::create();
         // Spawn for a quick response
         tokio::spawn(async move {
             for book in &ctx.hardcoded_database {
                 sleep(Duration::from_secs(1)).await;
                 if book.author.contains(&request.author_prefix) {
-                    tx.send(book.clone()).unwrap();
+                    generator_yielder.insert(book.clone()).await.unwrap();
                 }
             }
         });
 
-        rx
+        generator
+    }
+
+    async fn get_book_stream(
+        &self,
+        mut request: ClientStreamRequest<GetBookRequest>,
+        ctx: Arc<MyExampleContext>,
+    ) -> Book {
+        while let Some(_) = request.next().await {}
+
+        ctx.hardcoded_database[0].clone()
     }
 }
