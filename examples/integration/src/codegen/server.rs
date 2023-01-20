@@ -56,7 +56,7 @@ impl BookServiceCodeGen {
         service_def.add_server_streams("QueryBooks", move |request, context| {
             let service = service.clone();
             Box::pin(async move {
-                let server_streams = serv
+                let server_streams = service
                     .query_books(
                         QueryBooksRequest::decode(request.as_slice()).unwrap(),
                         context,
@@ -71,7 +71,7 @@ impl BookServiceCodeGen {
             })
         });
 
-        let serv = Arc::clone(&service);
+        let serv = Arc::clone(&shareable_service);
         service_def.add_client_streams("GetBookStream", move |request, context| {
             let serv = serv.clone();
             Box::pin(async move {

@@ -171,7 +171,7 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
 
         let mut response_stream = book_service_module.query_books(query_books_payload).await;
 
-        while let Some(book) = response.next().await {
+        while let Some(book) = response_stream.next().await {
             println!(
                 "> Book Service > Server Streams > QueryBooks > Response {:?}",
                 book
@@ -182,6 +182,7 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
         let (generator, generator_yielder) = Generator::create();
         tokio::spawn(async move {
             for _ in 0..4 {
+                println!("> Book Service > Client Stream > Sending stream payload");
                 generator_yielder
                     .insert(GetBookRequest { isbn: 1000 })
                     .await

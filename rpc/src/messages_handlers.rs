@@ -337,6 +337,7 @@ impl ClientMessagesHandler {
     }
 }
 
+#[derive(Default)]
 pub struct StreamsHandler {
     ack_listeners: Mutex<HashMap<String, OneShotSender<Vec<u8>>>>,
 }
