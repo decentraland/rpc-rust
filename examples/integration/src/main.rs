@@ -168,9 +168,9 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
             author_prefix: "mr".to_string(),
         };
 
-        let mut response = book_service_module.query_books(query_books_payload).await;
+        let mut response_stream = book_service_module.query_books(query_books_payload).await;
 
-        while let Some(book) = response.next().await {
+        while let Some(book) = response_stream.next().await {
             println!("> Server Streams > QueryBooks > Book {:?}", book)
         }
     });

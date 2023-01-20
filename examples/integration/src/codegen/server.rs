@@ -34,11 +34,11 @@ impl BookServiceCodeGen {
         println!("> BookServiceCodeGen > register_service");
         let mut service_def = ServiceModuleDefinition::new();
         // Share service ownership
-        let service = Arc::new(service);
+        let sharable_service = Arc::new(service);
         // Clone it for "GetBook" procedure
-        let serv = Arc::clone(&service);
+        let service = Arc::clone(&sharable_service);
         service_def.add_unary("GetBook", move |request, context| {
-            let serv = serv.clone();
+            let serv = service.clone();
             Box::pin(async move {
                 let res = serv
                     .get_book(GetBookRequest::decode(request.as_slice()).unwrap(), context)
@@ -48,13 +48,13 @@ impl BookServiceCodeGen {
             })
         });
 
-        let serv = Arc::clone(&service);
+        let service = Arc::clone(&sharable_service);
         service_def.add_server_streams("QueryBooks", move |request, context| {
-            let serv = serv.clone();
+            let serv = service.clone();
             Box::pin(async move {
                 let (tx, rx): (UnboundedSender<Vec<u8>>, UnboundedReceiver<Vec<u8>>) =
                     unbounded_channel();
-                let mut res = serv
+                let mut server_stream = serv
                     .query_books(
                         QueryBooksRequest::decode(request.as_slice()).unwrap(),
                         context,
@@ -62,7 +62,7 @@ impl BookServiceCodeGen {
                     .await;
 
                 tokio::spawn(async move {
-                    while let Some(book) = res.recv().await {
+                    while let Some(book) = server_stream.recv().await {
                         tx.send(book.encode_to_vec()).unwrap();
                     }
                 });
