@@ -3,14 +3,22 @@ use std::sync::Arc;
 
 use prost::Message;
 use rpc_rust::{server::RpcServerPort, types::ServiceModuleDefinition};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-use crate::{Book, GetBookRequest};
+use crate::{Book, GetBookRequest, QueryBooksRequest};
+
+use super::ServerStreamResponse;
 
 pub const SERVICE: &str = "BookService";
 
 #[async_trait::async_trait]
 pub trait BookServiceInterface<Context> {
     async fn get_book(&self, request: GetBookRequest, context: Arc<Context>) -> Book;
+    async fn query_books(
+        &self,
+        request: QueryBooksRequest,
+        context: Arc<Context>,
+    ) -> ServerStreamResponse<Book>;
 }
 
 pub struct BookServiceCodeGen {}
@@ -26,17 +34,40 @@ impl BookServiceCodeGen {
         println!("> BookServiceCodeGen > register_service");
         let mut service_def = ServiceModuleDefinition::new();
         // Share service ownership
-        let service = Arc::new(service);
+        let shareable_service = Arc::new(service);
         // Clone it for "GetBook" procedure
-        let serv = Arc::clone(&service);
-        service_def.add_definition("GetBook".to_string(), move |request, context| {
-            let serv = serv.clone();
+        let service = Arc::clone(&shareable_service);
+        service_def.add_unary("GetBook", move |request, context| {
+            let service = service.clone();
             Box::pin(async move {
-                let res = serv
+                let response = service
                     .get_book(GetBookRequest::decode(request.as_slice()).unwrap(), context)
                     .await;
-                println!("> Service Definition > Get Book > response: {:?}", res);
-                res.encode_to_vec()
+                println!("> Service Definition > Get Book > response: {:?}", response);
+                response.encode_to_vec()
+            })
+        });
+
+        let service = Arc::clone(&shareable_service);
+        service_def.add_server_streams("QueryBooks", move |request, context| {
+            let service = service.clone();
+            Box::pin(async move {
+                let (tx, rx): (UnboundedSender<Vec<u8>>, UnboundedReceiver<Vec<u8>>) =
+                    unbounded_channel();
+                let mut server_stream = service
+                    .query_books(
+                        QueryBooksRequest::decode(request.as_slice()).unwrap(),
+                        context,
+                    )
+                    .await;
+
+                tokio::spawn(async move {
+                    while let Some(book) = server_stream.recv().await {
+                        tx.send(book.encode_to_vec()).unwrap();
+                    }
+                });
+
+                rx
             })
         });
         port.register_module(SERVICE.to_string(), service_def)

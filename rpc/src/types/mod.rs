@@ -1,13 +1,27 @@
 use core::future::Future;
 use std::{collections::HashMap, pin::Pin, sync::Arc};
 
-pub type UnaryResponse = Pin<Box<dyn Future<Output = Vec<u8>> + Send>>;
+use tokio::sync::mpsc::UnboundedReceiver;
+
+pub type Response<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+
+pub type UnaryResponse = Response<Vec<u8>>;
 
 pub type UnaryRequestHandler<Context> =
     dyn Fn(Vec<u8>, Arc<Context>) -> UnaryResponse + Send + Sync;
 
+pub type ServerStreamsResponse = Response<UnboundedReceiver<Vec<u8>>>;
+
+pub type ServerStreamsRequestHandler<Context> =
+    dyn Fn(Vec<u8>, Arc<Context>) -> ServerStreamsResponse + Send + Sync;
+
+pub enum Definition<Context> {
+    Unary(Arc<UnaryRequestHandler<Context>>),
+    ServerStreams(Arc<ServerStreamsRequestHandler<Context>>),
+}
+
 pub struct ServiceModuleDefinition<Context> {
-    definitions: HashMap<String, Arc<UnaryRequestHandler<Context>>>,
+    definitions: HashMap<String, Definition<Context>>,
 }
 
 impl<Context> ServiceModuleDefinition<Context> {
@@ -17,20 +31,40 @@ impl<Context> ServiceModuleDefinition<Context> {
         }
     }
 
-    pub fn add_definition<
+    pub fn add_unary<
         H: Fn(Vec<u8>, Arc<Context>) -> Pin<Box<dyn Future<Output = Vec<u8>> + Send>>
             + Send
             + Sync
             + 'static,
     >(
         &mut self,
-        name: String,
+        name: &str,
         handler: H,
     ) {
-        self.definitions.insert(name, Arc::new(handler));
+        self.add_definition(name, Definition::Unary(Arc::new(handler)));
     }
 
-    pub fn get_definitions(&self) -> &HashMap<String, Arc<UnaryRequestHandler<Context>>> {
+    pub fn add_server_streams<
+        H: Fn(
+                Vec<u8>,
+                Arc<Context>,
+            ) -> Pin<Box<dyn Future<Output = UnboundedReceiver<Vec<u8>>> + Send>>
+            + Send
+            + Sync
+            + 'static,
+    >(
+        &mut self,
+        name: &str,
+        handler: H,
+    ) {
+        self.add_definition(name, Definition::ServerStreams(Arc::new(handler)));
+    }
+
+    fn add_definition(&mut self, name: &str, definition: Definition<Context>) {
+        self.definitions.insert(name.to_string(), definition);
+    }
+
+    pub fn get_definitions(&self) -> &HashMap<String, Definition<Context>> {
         &self.definitions
     }
 }

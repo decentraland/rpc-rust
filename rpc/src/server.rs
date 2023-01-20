@@ -4,21 +4,27 @@ use log::{debug, error};
 use prost::{alloc::vec::Vec, Message};
 
 use crate::{
+    messages_handlers::ServerMessagesHandler,
     protocol::{
         parse::{build_message_identifier, parse_header},
         CreatePort, CreatePortResponse, DestroyPort, ModuleProcedure, Request, RequestModule,
-        RequestModuleResponse, Response, RpcMessageTypes,
+        RequestModuleResponse, RpcMessageTypes,
     },
     transports::{Transport, TransportEvent},
     types::{
-        ServerModuleDeclaration, ServerModuleProcedures, ServiceModuleDefinition,
-        UnaryRequestHandler, UnaryResponse,
+        Definition, ServerModuleDeclaration, ServerModuleProcedures, ServerStreamsResponse,
+        ServiceModuleDefinition, UnaryResponse,
     },
 };
 
 type PortHandlerFn<Context> = dyn Fn(&mut RpcServerPort<Context>) + Send + Sync + 'static;
 
 pub type ServerResult<T> = Result<T, ServerError>;
+
+enum Procedure {
+    Unary(UnaryResponse),
+    ServerStreams(ServerStreamsResponse),
+}
 
 #[derive(Debug)]
 pub enum ServerError {
@@ -47,6 +53,10 @@ pub struct RpcServer<Context> {
     ports: HashMap<u32, RpcServerPort<Context>>,
     /// RpcServer Context
     context: Arc<Context>,
+    /// Handler in charge of handling every request<>response.
+    ///
+    /// It's stored inside an `Arc` because it'll be shared between threads
+    messages_handler: Arc<ServerMessagesHandler>,
 }
 impl<Context: Send + Sync + 'static> RpcServer<Context> {
     pub fn create(ctx: Context) -> Self {
@@ -55,6 +65,7 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
             handler: None,
             ports: HashMap::new(),
             context: Arc::new(ctx),
+            messages_handler: Arc::new(ServerMessagesHandler::new()),
         }
     }
 
@@ -129,49 +140,35 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
         match self.ports.get(&request.port_id) {
             Some(port) => {
                 let procedure_ctx = self.context.clone();
-                let procedure_handler = port
-                    .get_procedure(request.procedure_id, request.payload, procedure_ctx)
-                    .await?;
                 let transport = transport.clone();
+                let procedure_handler =
+                    port.get_procedure(request.procedure_id, request.payload, procedure_ctx)?;
 
-                Self::process_request(transport, message_identifier, procedure_handler);
+                match procedure_handler {
+                    Procedure::Unary(procedure_handler) => {
+                        self.messages_handler.process_unary_request(
+                            transport,
+                            message_identifier,
+                            procedure_handler,
+                        );
+                    }
+                    Procedure::ServerStreams(procedure_handler) => {
+                        self.messages_handler
+                            // Cloned because the receiver of the function is an Arc. It'll be spawned in other thread and it needs to modify its state
+                            .clone()
+                            .process_server_streams_request(
+                                transport,
+                                message_identifier,
+                                request.port_id,
+                                procedure_handler,
+                            )
+                    }
+                }
 
                 Ok(())
             }
             _ => Err(ServerError::PortNotFound),
         }
-    }
-
-    /// Receive a procedure handler future and process it in another task.
-    ///
-    /// This function aims to run the procedure handler in another task to achieve processing requests concurrently.
-    /// # Arguments
-    ///
-    /// * `transport` - Cloned transport from `RpcServer`
-    /// * `message_idenifier` - Message id to be sent in the response
-    /// * `request_handler` - Procedure handler future to be executed
-    fn process_request(
-        transport: Arc<dyn Transport + Send + Sync>,
-        message_identifier: u32,
-        request_handler: UnaryResponse,
-    ) {
-        tokio::spawn(async move {
-            let procedure_response = request_handler.await;
-            let response = Response {
-                message_identifier: build_message_identifier(
-                    RpcMessageTypes::Response as u32,
-                    message_identifier,
-                ),
-                payload: procedure_response,
-            };
-
-            match transport.send(response.encode_to_vec()).await {
-                Ok(_) => {}
-                Err(err) => {
-                    error!("Error while sending the response to request {message_identifier} - error: {err:?}")
-                }
-            }
-        });
     }
 
     /// Handle the requests when a client wants to load a specific registered module and then starts calling the procedures
@@ -305,7 +302,11 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                     .await?
             }
             RpcMessageTypes::DestroyPort => self.handle_destroy_port(&payload)?,
-            RpcMessageTypes::StreamAck | RpcMessageTypes::StreamMessage => {
+            RpcMessageTypes::StreamAck => self
+                .messages_handler
+                .clone()
+                .acknowledge_message(message_identifier, payload),
+            RpcMessageTypes::StreamMessage => {
                 // noops
             }
             _ => {
@@ -330,7 +331,7 @@ pub struct RpcServerPort<Context> {
     /// A module is loaded when the client requests to.
     loaded_modules: HashMap<String, ServerModuleDeclaration>,
     /// Procedures contains the id and the handler for each procedure
-    procedures: HashMap<u32, Arc<UnaryRequestHandler<Context>>>,
+    procedures: HashMap<u32, Definition<Context>>,
 }
 
 impl<Context> RpcServerPort<Context> {
@@ -373,13 +374,20 @@ impl<Context> RpcServerPort<Context> {
                     let definitions = module_generator.get_definitions();
                     let mut procedure_id = 1;
 
-                    for def in definitions {
+                    for (procedure_name, procedure_definition) in definitions {
                         let current_id = procedure_id;
-                        self.procedures.insert(current_id, def.1.clone());
+                        match procedure_definition {
+                            Definition::Unary(procedure) => self
+                                .procedures
+                                .insert(current_id, Definition::Unary(procedure.clone())),
+                            Definition::ServerStreams(procedure) => self
+                                .procedures
+                                .insert(current_id, Definition::ServerStreams(procedure.clone())),
+                        };
                         server_module_declaration
                             .procedures
                             .push(ServerModuleProcedures {
-                                procedure_name: def.0.clone(),
+                                procedure_name: procedure_name.clone(),
                                 procedure_id: current_id,
                             });
                         procedure_id += 1
@@ -399,14 +407,21 @@ impl<Context> RpcServerPort<Context> {
     }
 
     /// It will look up the procedure id in the port's `procedures` and return the procedure's handler
-    async fn get_procedure(
+    fn get_procedure(
         &self,
         procedure_id: u32,
         payload: Vec<u8>,
         context: Arc<Context>,
-    ) -> ServerResult<UnaryResponse> {
+    ) -> ServerResult<Procedure> {
         match self.procedures.get(&procedure_id) {
-            Some(procedure_handler) => Ok(procedure_handler(payload, context)),
+            Some(procedure_definition) => match procedure_definition {
+                Definition::Unary(procedure_handler) => {
+                    Ok(Procedure::Unary(procedure_handler(payload, context)))
+                }
+                Definition::ServerStreams(procedure_handler) => Ok(Procedure::ServerStreams(
+                    procedure_handler(payload, context),
+                )),
+            },
             _ => Err(ServerError::ProcedureError),
         }
     }
