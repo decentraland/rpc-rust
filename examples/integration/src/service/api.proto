@@ -18,4 +18,5 @@ service BookService {
   rpc GetBook(GetBookRequest) returns (Book) {}
   rpc QueryBooks(QueryBooksRequest) returns (stream Book) {}
   rpc GetBookStream(stream GetBookRequest) returns (Book) {}
+  rpc QueryBooksStream(stream GetBookRequest) returns (stream Book) {}
 }

@@ -23,6 +23,11 @@ pub trait BookServiceInterface<Context> {
         request: ClientStreamRequest<GetBookRequest>,
         context: Arc<Context>,
     ) -> Book;
+    async fn query_books_streams(
+        &self,
+        request: ClientStreamRequest<GetBookRequest>,
+        context: Arc<Context>,
+    ) -> ServerStreamResponse<Book>;
 }
 
 pub struct BookServiceCodeGen {}
@@ -78,6 +83,19 @@ impl BookServiceCodeGen {
 
                 let response = serv.get_book_stream(generator, context).await;
                 response.encode_to_vec()
+            })
+        });
+
+        let serv = Arc::clone(&service);
+        service_def.add_bidir_streams("QueryBooksStream", move |request, context| {
+            let serv = serv.clone();
+            Box::pin(async move {
+                let generator = Generator::from_generator(request, |item| {
+                    GetBookRequest::decode(item.as_slice()).unwrap()
+                });
+
+                let response = serv.query_books_streams(generator, context).await;
+                Generator::from_generator(response, |book| book.encode_to_vec())
             })
         });
 
