@@ -501,7 +501,7 @@ impl<Context> RpcServerPort<Context> {
                     Ok(Procedure::ClientStreams(procedure_handler.clone()))
                 }
                 Definition::BiStreams(procedure_handler) => {
-                    return Ok(Procedure::BiStreams(procedure_handler.clone()))
+                    Ok(Procedure::BiStreams(procedure_handler.clone()))
                 }
             },
             _ => Err(ServerError::ProcedureError),
