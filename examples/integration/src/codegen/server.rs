@@ -64,10 +64,7 @@ impl BookServiceCodeGen {
                     .await;
 
                 // Transforming and filling the new generator is spawned so the response it quick
-                let new_generator =
-                    Generator::from_generator(server_streams, |item| item.encode_to_vec());
-
-                new_generator
+                Generator::from_generator(server_streams, |item| item.encode_to_vec())
             })
         });
 

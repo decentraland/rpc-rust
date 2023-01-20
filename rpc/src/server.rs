@@ -456,13 +456,13 @@ impl<Context> RpcServerPort<Context> {
         match self.procedures.get(&procedure_id) {
             Some(procedure_definition) => match procedure_definition {
                 Definition::Unary(procedure_handler) => {
-                    return Ok(Procedure::Unary(procedure_handler.clone()));
+                    Ok(Procedure::Unary(procedure_handler.clone()))
                 }
                 Definition::ServerStreams(procedure_handler) => {
-                    return Ok(Procedure::ServerStreams(procedure_handler.clone()));
+                    Ok(Procedure::ServerStreams(procedure_handler.clone()))
                 }
                 Definition::ClientStreams(procedure_handler) => {
-                    return Ok(Procedure::ClientStreams(procedure_handler.clone()));
+                    Ok(Procedure::ClientStreams(procedure_handler.clone()))
                 }
             },
             _ => Err(ServerError::ProcedureError),

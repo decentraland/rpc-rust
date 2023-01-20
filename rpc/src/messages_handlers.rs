@@ -32,7 +32,7 @@ use crate::{
 #[derive(Default)]
 pub struct ServerMessagesHandler {
     pub streams_handler: Arc<StreamsHandler>,
-    listeners: Mutex<HashMap<u32, AsyncChannelSender<(RpcMessageTypes, u32, StreamMessage)>>>,
+    listeners: Mutex<HashMap<u32, AsyncChannelSender<StreamPackage>>>,
 }
 
 impl ServerMessagesHandler {

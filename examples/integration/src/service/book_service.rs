@@ -59,7 +59,7 @@ impl BookServiceInterface<MyExampleContext> for BookService {
         mut request: ClientStreamRequest<GetBookRequest>,
         ctx: Arc<MyExampleContext>,
     ) -> Book {
-        while let Some(_) = request.next().await {}
+        while request.next().await.is_some() {}
 
         ctx.hardcoded_database[0].clone()
     }

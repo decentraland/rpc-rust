@@ -52,7 +52,7 @@ impl StreamProtocol {
             _ = self.process_cancellation_token.cancelled() =>  {
                 self.generator.0.close();
                 self.is_remote_closed = true;
-                return None;
+                None
             }
             message = self.generator.0.next() => {
                 match message {
@@ -132,7 +132,7 @@ impl StreamProtocol {
         &self,
         callback: Callback,
     ) -> Result<AsyncChannelSender<(RpcMessageTypes, u32, StreamMessage)>, CommonError> {
-        if let Err(_) = self.acknowledge_open().await {
+        if self.acknowledge_open().await.is_err() {
             return Err(CommonError::TransportError);
         }
         let token = self.process_cancellation_token.clone();
