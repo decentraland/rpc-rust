@@ -196,7 +196,7 @@ impl RpcClientModule {
             .stream_server_messages(self.port_id, response.1)
             .await;
 
-        if let Err(_) = stream_protocol.acknowledge_open().await {
+        if (stream_protocol.acknowledge_open().await).is_err() {
             return Err(ClientError::TransportError);
         }
 
@@ -268,7 +268,7 @@ impl ClientRequestDispatcher {
             // store next_message_id
             *message_lock += 1;
             (payload, message_id)
-        }; // Force to drop the mutex for other conccurrent operations
+        }; // Force to drop the mutex for other concurrent operations
 
         let payload = payload.encode_to_vec();
         self.messages_handler
