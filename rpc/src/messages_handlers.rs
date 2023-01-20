@@ -26,7 +26,7 @@ use crate::{
     server::{ServerError, ServerResult},
     stream_protocol::Generator,
     transports::{Transport, TransportEvent},
-    types::{ClientStreamsResponse, ServerStreamsResponse, UnaryResponse},
+    types::{BiStreamsResponse, ClientStreamsResponse, ServerStreamsResponse, UnaryResponse},
 };
 
 #[derive(Default)]
@@ -108,6 +108,33 @@ impl ServerMessagesHandler {
             let response = procedure_handler.await;
             self.send_response(transport, message_identifier, response)
                 .await;
+        });
+    }
+
+    pub fn process_bidir_streams_request(
+        self: Arc<Self>,
+        transport: Arc<dyn Transport + Send + Sync>,
+        message_identifier: u32,
+        port_id: u32,
+        client_stream_id: u32,
+        listener: AsyncChannelSender<(RpcMessageTypes, u32, StreamMessage)>,
+        procedure_handler: BiStreamsResponse,
+    ) {
+        tokio::spawn(async move {
+            self.register_listener(client_stream_id, listener).await;
+            let open_ack_listener = self
+                .open_server_stream(transport.clone(), message_identifier, port_id)
+                .await
+                .unwrap();
+
+            open_ack_listener.await.unwrap();
+
+            let stream = procedure_handler.await;
+
+            self.streams_handler
+                .send_stream_through_transport(transport, stream, port_id, message_identifier)
+                .await
+                .unwrap()
         });
     }
 

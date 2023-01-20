@@ -13,8 +13,9 @@ use crate::{
     stream_protocol::StreamProtocol,
     transports::{Transport, TransportEvent},
     types::{
-        ClientStreamsRequestHandler, Definition, ServerModuleDeclaration, ServerModuleProcedures,
-        ServerStreamsRequestHandler, ServiceModuleDefinition, UnaryRequestHandler,
+        BiStreamsRequestHandler, ClientStreamsRequestHandler, Definition, ServerModuleDeclaration,
+        ServerModuleProcedures, ServerStreamsRequestHandler, ServiceModuleDefinition,
+        UnaryRequestHandler,
     },
 };
 
@@ -26,6 +27,7 @@ enum Procedure<Context> {
     Unary(Arc<UnaryRequestHandler<Context>>),
     ServerStreams(Arc<ServerStreamsRequestHandler<Context>>),
     ClientStreams(Arc<ClientStreamsRequestHandler<Context>>),
+    BiStreams(Arc<BiStreamsRequestHandler<Context>>),
 }
 
 #[derive(Debug)]
@@ -192,6 +194,37 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                                         ),
                                         listener,
                                     );
+                            }
+                            Err(_) => return Err(ServerError::TransportError),
+                        }
+                    }
+                    Procedure::BiStreams(procedure_handler) => {
+                        let client_stream_id = request.client_stream;
+                        let stream_protocol = StreamProtocol::new(
+                            transport.clone(),
+                            request.port_id,
+                            request.client_stream,
+                        );
+
+                        let msg_handler = self.messages_handler.clone();
+                        match stream_protocol
+                            .start_processing(move || async move {
+                                msg_handler.unregister_listener(client_stream_id).await
+                            })
+                            .await
+                        {
+                            Ok(listener) => {
+                                self.messages_handler.clone().process_bidir_streams_request(
+                                    transport_cloned,
+                                    message_identifier,
+                                    request.port_id,
+                                    client_stream_id,
+                                    listener,
+                                    procedure_handler(
+                                        stream_protocol.to_generator(|item| item),
+                                        procedure_ctx,
+                                    ),
+                                );
                             }
                             Err(_) => return Err(ServerError::TransportError),
                         }
@@ -419,15 +452,18 @@ impl<Context> RpcServerPort<Context> {
                     for (procedure_name, procedure_definition) in definitions {
                         let current_id = procedure_id;
                         match procedure_definition {
-                            Definition::Unary(procedure) => self
+                            Definition::Unary(ref procedure) => self
                                 .procedures
                                 .insert(current_id, Definition::Unary(procedure.clone())),
-                            Definition::ServerStreams(procedure) => self
+                            Definition::ServerStreams(ref procedure) => self
                                 .procedures
                                 .insert(current_id, Definition::ServerStreams(procedure.clone())),
                             &Definition::ClientStreams(ref procedure) => self
                                 .procedures
                                 .insert(current_id, Definition::ClientStreams(procedure.clone())),
+                            Definition::BiStreams(ref procedure) => self
+                                .procedures
+                                .insert(current_id, Definition::BiStreams(procedure.clone())),
                         };
                         server_module_declaration
                             .procedures
@@ -463,6 +499,9 @@ impl<Context> RpcServerPort<Context> {
                 }
                 Definition::ClientStreams(procedure_handler) => {
                     Ok(Procedure::ClientStreams(procedure_handler.clone()))
+                }
+                Definition::BiStreams(procedure_handler) => {
+                    return Ok(Procedure::BiStreams(procedure_handler.clone()))
                 }
             },
             _ => Err(ServerError::ProcedureError),
