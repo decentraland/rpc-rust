@@ -34,27 +34,27 @@ impl BookServiceCodeGen {
         println!("> BookServiceCodeGen > register_service");
         let mut service_def = ServiceModuleDefinition::new();
         // Share service ownership
-        let sharable_service = Arc::new(service);
+        let shareable_service = Arc::new(service);
         // Clone it for "GetBook" procedure
-        let service = Arc::clone(&sharable_service);
+        let service = Arc::clone(&shareable_service);
         service_def.add_unary("GetBook", move |request, context| {
-            let serv = service.clone();
+            let service = service.clone();
             Box::pin(async move {
-                let res = serv
+                let response = service
                     .get_book(GetBookRequest::decode(request.as_slice()).unwrap(), context)
                     .await;
-                println!("> Service Definition > Get Book > response: {:?}", res);
-                res.encode_to_vec()
+                println!("> Service Definition > Get Book > response: {:?}", response);
+                response.encode_to_vec()
             })
         });
 
-        let service = Arc::clone(&sharable_service);
+        let service = Arc::clone(&shareable_service);
         service_def.add_server_streams("QueryBooks", move |request, context| {
-            let serv = service.clone();
+            let service = service.clone();
             Box::pin(async move {
                 let (tx, rx): (UnboundedSender<Vec<u8>>, UnboundedReceiver<Vec<u8>>) =
                     unbounded_channel();
-                let mut server_stream = serv
+                let mut server_stream = service
                     .query_books(
                         QueryBooksRequest::decode(request.as_slice()).unwrap(),
                         context,

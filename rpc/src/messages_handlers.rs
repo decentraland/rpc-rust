@@ -29,6 +29,7 @@ use crate::{
     types::{ServerStreamsResponse, UnaryResponse},
 };
 
+#[derive(Default)]
 pub struct ServerMessagesHandler {
     ack_listeners: Mutex<HashMap<String, OneShotSender<Vec<u8>>>>,
 }
@@ -46,7 +47,7 @@ impl ServerMessagesHandler {
     /// # Arguments
     ///
     /// * `transport` - Cloned transport from `RpcServer`
-    /// * `message_idenifier` - Message id to be sent in the response
+    /// * `message_identifier` - Message id to be sent in the response
     /// * `request_handler` - Procedure handler future to be executed
     pub fn process_unary_request(
         &self,
@@ -235,10 +236,12 @@ impl ServerMessagesHandler {
     }
 }
 
+type StreamPackage = (RpcMessageTypes, u32, StreamMessage);
+
 pub struct ClientMessagesHandler {
     pub transport: Arc<dyn Transport + Send + Sync>,
     one_time_listeners: Mutex<HashMap<u32, OneShotSender<Vec<u8>>>>,
-    listeners: Mutex<HashMap<u32, AsyncChannelSender<(RpcMessageTypes, u32, StreamMessage)>>>,
+    listeners: Mutex<HashMap<u32, AsyncChannelSender<StreamPackage>>>,
     process_cancellation_token: CancellationToken,
 }
 
@@ -295,8 +298,9 @@ impl ClientMessagesHandler {
                             } else {
                                 let listeners = self.listeners.lock().await;
                                 let listener = listeners.get(&message_header.1);
+
                                 if let Some(listener) = listener {
-                                    match listener
+                                    if let Err(error) = listener
                                         .send((
                                             message_header.0,
                                             message_header.1,
@@ -304,8 +308,10 @@ impl ClientMessagesHandler {
                                         ))
                                         .await
                                     {
-                                        Ok(_) => {}
-                                        Err(_) => {}
+                                        debug!(
+                                            "> Client > Error while sending message {}",
+                                            error.to_string()
+                                        );
                                     }
                                 }
                             }
