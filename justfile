@@ -1,3 +1,3 @@
 # Run integration example
 run-integration:
-  cd examples/integration && cargo run
+  cd examples/integration && cargo run -- memory

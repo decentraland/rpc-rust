@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{env, time::Duration};
 
 use integration::{
     codegen::{
@@ -104,14 +104,27 @@ async fn create_quic_transports() -> (QuicTransport, QuicTransport) {
 
 #[tokio::main]
 async fn main() {
-    println!("--- Running example with Memory Transports ---");
-    run_with_transports(create_memory_transports()).await;
-
-    println!("--- Running example with Web Socket Transports ---");
-    run_with_transports(create_web_socket_transports().await).await;
-
-    println!("--- Running example with QUIC Transports ---");
-    run_with_transports(create_quic_transports().await).await;
+    let args: Vec<String> = env::args().collect();
+    let example = args.get(1);
+    if let Some(example) = example {
+        if example == "memory" {
+            println!("--- Running example with Memory Transports ---");
+            run_with_transports(create_memory_transports()).await;
+        } else if example == "ws" {
+            println!("--- Running example with Web Socket Transports ---");
+            run_with_transports(create_web_socket_transports().await).await;
+        } else if example == "quic" {
+            println!("--- Running example with QUIC Transports ---");
+            run_with_transports(create_quic_transports().await).await;
+        }
+    } else {
+        println!("--- Running example with Memory Transports ---");
+        run_with_transports(create_memory_transports()).await;
+        println!("--- Running example with Web Socket Transports ---");
+        run_with_transports(create_web_socket_transports().await).await;
+        println!("--- Running example with QUIC Transports ---");
+        run_with_transports(create_quic_transports().await).await;
+    }
 }
 
 async fn run_with_transports<T: Transport + Send + Sync + 'static>(
@@ -158,7 +171,7 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
         println!("> GetBook: Concurrent Example");
 
         let get_book_payload = GetBookRequest { isbn: 1000 };
-        let get_book_payload_2 = GetBookRequest { isbn: 1010 };
+        let get_book_payload_2 = GetBookRequest { isbn: 1001 };
 
         join!(
             book_service_module.get_book(get_book_payload),
