@@ -1,7 +1,12 @@
 use std::{collections::HashMap, sync::Arc, u8};
 
+use async_channel::{
+    unbounded as create_unbounded_asynch_channel, Receiver as AsyncChannelReceiver,
+    Sender as AsyncChannelSender,
+};
 use log::{debug, error};
 use prost::{alloc::vec::Vec, Message};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 use crate::{
     messages_handlers::ServerMessagesHandler,
@@ -11,7 +16,7 @@ use crate::{
         RequestModuleResponse, RpcMessageTypes,
     },
     stream_protocol::StreamProtocol,
-    transports::{Transport, TransportEvent},
+    transports::{Transport, TransportError, TransportEvent},
     types::{
         BiStreamsRequestHandler, ClientStreamsRequestHandler, Definition, ServerModuleDeclaration,
         ServerModuleProcedures, ServerStreamsRequestHandler, ServiceModuleDefinition,
@@ -44,13 +49,29 @@ pub enum ServerError {
     ProcedureError,
 }
 
+type TransportID = u32;
+
+type TransportMessage<T> = (TransportID, T);
+
+enum ServerEvents {
+    NewTransport(Arc<dyn Transport + Send + Sync>),
+    TransportFinished,
+    Terminated,
+}
+
+#[derive(Debug)]
+enum TransportNotification {
+    Ok(TransportMessage<TransportEvent>),
+    Err(TransportMessage<TransportError>),
+}
+
 /// RpcServer receives and process different requests from the RpcClient
 ///
 /// Once a RpcServer is inited, you should attach a transport and handler
 /// for the port creation.
 pub struct RpcServer<Context> {
     /// The Transport used for the communication between `RpcClient` and `RpcServer`
-    transport: Option<Arc<dyn Transport + Send + Sync>>,
+    transports: HashMap<TransportID, Arc<dyn Transport + Send + Sync>>,
     /// The handler executed when a new port is created
     handler: Option<Box<PortHandlerFn<Context>>>,
     /// Ports registered in the `RpcServer`
@@ -61,51 +82,95 @@ pub struct RpcServer<Context> {
     ///
     /// It's stored inside an `Arc` because it'll be shared between threads
     messages_handler: Arc<ServerMessagesHandler>,
+    /// Channel to collect new `ServerEvents`
+    events_channel: (
+        UnboundedSender<ServerEvents>,
+        // It's an Option so that we can take ownership of it without problem
+        Option<UnboundedReceiver<ServerEvents>>,
+    ),
+    /// The id that will be assigned if a new transport is a attached
+    next_transport_id: u32,
 }
 impl<Context: Send + Sync + 'static> RpcServer<Context> {
     pub fn create(ctx: Context) -> Self {
+        let channel = unbounded_channel();
         Self {
-            transport: None,
+            transports: HashMap::new(),
             handler: None,
             ports: HashMap::new(),
             context: Arc::new(ctx),
             messages_handler: Arc::new(ServerMessagesHandler::new()),
+            next_transport_id: 1,
+            events_channel: (channel.0, Some(channel.1)),
         }
     }
 
     /// Attach the server half of the transport for Client<>Server comms
-    pub fn attach_transport<T: Transport + Send + Sync + 'static>(&mut self, transport: T) {
-        self.transport = Some(Arc::new(transport));
+    pub fn attach_transport<T: Transport + Send + Sync + 'static>(
+        &mut self,
+        mut transport: T,
+    ) -> ServerResult<()> {
+        let current_id = self.next_transport_id;
+        transport.set_id(current_id);
+        let transport = Arc::new(transport);
+        match self
+            .events_channel
+            .0
+            .send(ServerEvents::NewTransport(transport.clone()))
+        {
+            Ok(_) => {
+                self.transports.insert(current_id, transport);
+                self.next_transport_id += 1;
+                Ok(())
+            }
+            Err(_) => {
+                error!("Error on attaching port");
+                Err(ServerError::TransportNotAttached)
+            }
+        }
     }
 
     /// Start listening messages from the attached transport
     pub async fn run(&mut self) {
+        // create transports notifier. This channel will be in charge of sending all messages (and errors) that all the transports attached to server receieve
+        // We use async_channel crate for this channel because we want our receiver to be cloned so that we can close it when no more transports are open
+        // And after that, our server can exit because it knows that it wont receive more notifications
+        let (transports_notifier, transports_notification_receiver) =
+            create_unbounded_asynch_channel::<TransportNotification>();
+        // Spawn a task to process ServerEvents in background
+        self.process_server_events(
+            transports_notifier,
+            transports_notification_receiver.clone(),
+        );
+        // loop on transports_notifier
         loop {
-            match self
-                .transport
-                .as_mut()
-                .expect("No transport attached")
-                .receive()
-                .await
-            {
-                Ok(event) => match event {
-                    TransportEvent::Connect => {
-                        // Response back to the client to finally establish the connection
-                        // on both ends
-                        self.transport
-                            .as_ref()
-                            .unwrap()
-                            .send(vec![0])
-                            .await
-                            .expect("expect to be able to connect");
-                    }
-                    TransportEvent::Error(err) => error!("Transport error {}", err),
-                    TransportEvent::Message(payload) => match self.handle_message(payload).await {
-                        Ok(_) => debug!("Transport message handled!"),
-                        Err(e) => error!("Failed to handle message: {:?}", e),
+            match transports_notification_receiver.recv().await {
+                Ok(notification) => match notification {
+                    TransportNotification::Ok((transport_id, event)) => match event {
+                        TransportEvent::Connect => {
+                            // Response back to the client to finally establish the connection
+                            // on both ends
+                            let transport = self.transports.get(&transport_id).unwrap();
+                            transport
+                                .send(vec![0])
+                                .await
+                                .expect("expect to be able to connect");
+                        }
+                        TransportEvent::Error(err) => error!("Transport error {}", err),
+                        TransportEvent::Message(payload) => {
+                            let transport = self.transports.get(&transport_id).unwrap().clone();
+                            match self.handle_message(transport, payload).await {
+                                Ok(_) => debug!("Transport message handled!"),
+                                Err(e) => error!("Failed to handle message: {:?}", e),
+                            }
+                        }
+                        TransportEvent::Close => {
+                            error!("Transport closed");
+                            break;
+                        }
                     },
-                    TransportEvent::Close => {
-                        error!("Transport closed");
+                    TransportNotification::Err(error) => {
+                        error!("Error on transport {error:?}");
                         break;
                     }
                 },
@@ -115,6 +180,87 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                 }
             }
         }
+    }
+
+    fn process_server_events(
+        &mut self,
+        transports_notifier: AsyncChannelSender<TransportNotification>,
+        transports_notification_receiver: AsyncChannelReceiver<TransportNotification>,
+    ) {
+        let mut events_receiver = self.events_channel.1.take().unwrap();
+        let events_sender = self.events_channel.0.clone();
+        tokio::spawn(async move {
+            let mut transport_finished_events = 0;
+            let mut running_transport = 0;
+            while let Some(event) = events_receiver.recv().await {
+                match event {
+                    ServerEvents::NewTransport(transport) => {
+                        let tx_cloned = transports_notifier.clone();
+                        let event_sender_cloned = events_sender.clone();
+                        running_transport += 1;
+                        tokio::spawn(async move {
+                            loop {
+                                match transport.receive().await {
+                                    Ok(event) => {
+                                        if matches!(event, TransportEvent::Close) {
+                                            match event_sender_cloned
+                                                .send(ServerEvents::TransportFinished)
+                                            {
+                                                Ok(()) => {}
+                                                Err(_) => {
+                                                    break;
+                                                }
+                                            }
+                                            break;
+                                        }
+                                        match tx_cloned
+                                            .send(TransportNotification::Ok((
+                                                transport.get_id(),
+                                                event,
+                                            )))
+                                            .await
+                                        {
+                                            Ok(_) => {}
+                                            Err(_) => {
+                                                error!("Error while sending new message from transport to server via notifier");
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    Err(error) => {
+                                        match tx_cloned
+                                            .send(TransportNotification::Err((1, error)))
+                                            .await
+                                        {
+                                            Ok(_) => {}
+                                            Err(_) => {
+                                                error!("Error while sending an error from transport to server via notifier");
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    }
+                    ServerEvents::TransportFinished => {
+                        transport_finished_events += 1;
+                        if running_transport == transport_finished_events {
+                            match events_sender.send(ServerEvents::Terminated) {
+                                Ok(_) => {}
+                                Err(_) => {
+                                    error!("Error while sending terminated event from event collector task")
+                                }
+                            }
+                        }
+                    }
+                    ServerEvents::Terminated => {
+                        transports_notification_receiver.close();
+                        events_receiver.close();
+                    }
+                }
+            }
+        });
     }
 
     /// Set a handler for the port creation
@@ -134,12 +280,14 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
     ///
     /// * `message_identifier` - A 32-bit unsigned number created by `build_message_identifier` in `protocol/parse.rs`
     /// * `payload` - Slice of bytes containing the request payload encoded with protobuf
-    async fn handle_request(&self, message_identifier: u32, payload: &[u8]) -> ServerResult<()> {
-        let transport = self
-            .transport
-            .as_ref()
-            .ok_or(ServerError::TransportNotAttached)?;
-        let request = Request::decode(payload).map_err(|_| ServerError::ProtocolError)?;
+    async fn handle_request(
+        &self,
+        transport: Arc<dyn Transport + Send + Sync>,
+        message_identifier: u32,
+        payload: Vec<u8>,
+    ) -> ServerResult<()> {
+        let request =
+            Request::decode(payload.as_slice()).map_err(|_| ServerError::ProtocolError)?;
 
         match self.ports.get(&request.port_id) {
             Some(port) => {
@@ -245,15 +393,12 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
     /// * `payload` - Slice of bytes containing the request payload encoded with protobuf
     async fn handle_request_module(
         &mut self,
+        transport: Arc<dyn Transport + Send + Sync>,
         message_identifier: u32,
-        payload: &[u8],
+        payload: Vec<u8>,
     ) -> ServerResult<()> {
-        let transport = self
-            .transport
-            .as_ref()
-            .ok_or(ServerError::TransportNotAttached)?;
         let request_module =
-            RequestModule::decode(payload).map_err(|_| ServerError::ProtocolError)?;
+            RequestModule::decode(payload.as_slice()).map_err(|_| ServerError::ProtocolError)?;
         if let Some(port) = self.ports.get_mut(&request_module.port_id) {
             if let Ok(server_module_declaration) = port.load_module(request_module.module_name) {
                 let mut procedures: Vec<ModuleProcedure> = Vec::default();
@@ -298,15 +443,13 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
     /// * `payload` - Slice of bytes containing the request payload encoded with protobuf
     async fn handle_create_port(
         &mut self,
+        transport: Arc<dyn Transport + Send + Sync>,
         message_identifier: u32,
-        payload: &[u8],
+        payload: Vec<u8>,
     ) -> ServerResult<()> {
-        let transport = self
-            .transport
-            .as_ref()
-            .ok_or(ServerError::TransportNotAttached)?;
         let port_id = (self.ports.len() + 1) as u32;
-        let create_port = CreatePort::decode(payload).map_err(|_| ServerError::ProtocolError)?;
+        let create_port =
+            CreatePort::decode(payload.as_slice()).map_err(|_| ServerError::ProtocolError)?;
         let port_name = create_port.port_name;
         let mut port = RpcServerPort::new(port_name.clone());
 
@@ -337,8 +480,9 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
     /// # Arguments
     ///
     /// * `payload` - Slice of bytes containing the request payload encoded with protobuf
-    fn handle_destroy_port(&mut self, payload: &[u8]) -> ServerResult<()> {
-        let destroy_port = DestroyPort::decode(payload).map_err(|_| ServerError::ProtocolError)?;
+    fn handle_destroy_port(&mut self, payload: Vec<u8>) -> ServerResult<()> {
+        let destroy_port =
+            DestroyPort::decode(payload.as_slice()).map_err(|_| ServerError::ProtocolError)?;
 
         self.ports.remove(&destroy_port.port_id);
         Ok(())
@@ -353,21 +497,28 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
     /// # Arguments
     ///
     /// * `payload` - Vec of bytes containing the request payload encoded with protobuf
-    async fn handle_message(&mut self, payload: Vec<u8>) -> ServerResult<()> {
+    async fn handle_message(
+        &mut self,
+        transport: Arc<dyn Transport + Send + Sync>,
+        payload: Vec<u8>,
+    ) -> ServerResult<()> {
         let (message_type, message_identifier) =
             parse_header(&payload).ok_or(ServerError::ProtocolError)?;
 
         match message_type {
-            RpcMessageTypes::Request => self.handle_request(message_identifier, &payload).await?,
+            RpcMessageTypes::Request => {
+                self.handle_request(transport, message_identifier, payload)
+                    .await?
+            }
             RpcMessageTypes::RequestModule => {
-                self.handle_request_module(message_identifier, &payload)
+                self.handle_request_module(transport, message_identifier, payload)
                     .await?
             }
             RpcMessageTypes::CreatePort => {
-                self.handle_create_port(message_identifier, &payload)
+                self.handle_create_port(transport, message_identifier, payload)
                     .await?
             }
-            RpcMessageTypes::DestroyPort => self.handle_destroy_port(&payload)?,
+            RpcMessageTypes::DestroyPort => self.handle_destroy_port(payload)?,
             RpcMessageTypes::StreamAck => {
                 // Client akcnowledged a stream message sent by Server
                 // and we should notify the waiter for the ack in order to
