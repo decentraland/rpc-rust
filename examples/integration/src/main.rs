@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{env, time::Duration};
 
 use integration::{
     codegen::{
@@ -104,21 +104,38 @@ async fn create_quic_transports() -> (QuicTransport, QuicTransport) {
 
 #[tokio::main]
 async fn main() {
-    println!("--- Running example with Memory Transports ---");
-    run_with_transports(create_memory_transports()).await;
-
-    println!("--- Running example with Web Socket Transports ---");
-    run_with_transports(create_web_socket_transports().await).await;
-
-    println!("--- Running example with QUIC Transports ---");
-    run_with_transports(create_quic_transports().await).await;
+    let args: Vec<String> = env::args().collect();
+    let example = args.get(1);
+    if let Some(example) = example {
+        if example == "memory" {
+            println!("--- Running example with Memory Transports ---");
+            run_with_transports(create_memory_transports()).await;
+        } else if example == "ws" {
+            println!("--- Running example with Web Socket Transports ---");
+            run_with_transports(create_web_socket_transports().await).await;
+        } else if example == "quic" {
+            println!("--- Running example with QUIC Transports ---");
+            run_with_transports(create_quic_transports().await).await;
+        }
+    } else {
+        println!("--- Running example with Memory Transports ---");
+        run_with_transports(create_memory_transports()).await;
+        println!("--- Running example with Web Socket Transports ---");
+        run_with_transports(create_web_socket_transports().await).await;
+        println!("--- Running example with QUIC Transports ---");
+        run_with_transports(create_quic_transports().await).await;
+    }
 }
 
 async fn run_with_transports<T: Transport + Send + Sync + 'static>(
     (client_transport, server_transport): (T, T),
 ) {
+    // Another client to test multiple transports server feature
+    let client_2_transport = create_memory_transports();
     let client_handle = tokio::spawn(async move {
         let mut client = RpcClient::new(client_transport).await.unwrap();
+
+        let mut client_2 = RpcClient::new(client_2_transport.0).await.unwrap();
 
         println!("> Creating Port");
         let client_port = match client.create_port("TEST_PORT").await {
@@ -138,8 +155,32 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
         assert_eq!(client_port.port_name, "TEST_PORT");
         println!("> Port created");
 
+        println!("> Creating Port 2");
+        let client_port_2 = match client_2.create_port("TEST_PORT_2").await {
+            Ok(port) => {
+                println!(
+                    "> Create Port > Created successfully > Port name: {}",
+                    port.port_name
+                );
+                port
+            }
+            Err(err) => {
+                println!("> Create Port > Error on creating the port: {:?}", err);
+                panic!()
+            }
+        };
+
+        assert_eq!(client_port_2.port_name, "TEST_PORT_2");
+        println!("> Port 2 created");
+
         println!("> Calling load module");
         let book_service_module = client_port
+            .load_module::<BookServiceClient>("BookService")
+            .await
+            .unwrap();
+
+        println!("> Calling load module for client 2");
+        let book_service_module_2 = client_port_2
             .load_module::<BookServiceClient>("BookService")
             .await
             .unwrap();
@@ -155,10 +196,23 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
         assert_eq!(response.title, "Rust: crash course");
         assert_eq!(response.author, "mr steve");
 
+        println!("> Client 2 > Unary > Request > GetBook");
+
+        let get_book_payload = GetBookRequest { isbn: 1004 };
+        let response = book_service_module_2.get_book(get_book_payload).await;
+
+        println!("> Client 2 > Unary > Response > GetBook: {:?}", response);
+
+        assert_eq!(response.isbn, 1004);
+        assert_eq!(response.title, "Smart Contracts 101");
+        assert_eq!(response.author, "buterin");
+
+        drop(client_2);
+
         println!("> GetBook: Concurrent Example");
 
         let get_book_payload = GetBookRequest { isbn: 1000 };
-        let get_book_payload_2 = GetBookRequest { isbn: 1010 };
+        let get_book_payload_2 = GetBookRequest { isbn: 1001 };
 
         join!(
             book_service_module.get_book(get_book_payload),
@@ -224,7 +278,25 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
             BookServiceCodeGen::register_service(port, book_service::BookService {})
         });
 
-        server.attach_transport(server_transport);
+        match server.attach_transport(server_transport) {
+            Ok(_) => {
+                println!("> RpcServer > first transport attached successfully");
+            }
+            Err(_) => {
+                println!("> RpcServer > unable to attach transport");
+                panic!()
+            }
+        }
+
+        match server.attach_transport(client_2_transport.1) {
+            Ok(_) => {
+                println!("> RpcServer > second transport attached successfully");
+            }
+            Err(_) => {
+                println!("> RpcServer > unable to attach transport");
+                panic!()
+            }
+        }
 
         server.run().await;
     });

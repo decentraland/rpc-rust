@@ -20,6 +20,7 @@ type WriteStream =
 type ReadStream = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 
 pub struct WebSocketTransport {
+    id: Option<u32>,
     read: Mutex<ReadStream>,
     write: Mutex<WriteStream>,
     ready: AtomicBool,
@@ -29,6 +30,7 @@ impl WebSocketTransport {
     fn create(ws: WebSocketStream<MaybeTlsStream<TcpStream>>) -> Self {
         let (write, read) = ws.split();
         Self {
+            id: None,
             read: Mutex::new(read),
             write: Mutex::new(write),
             ready: AtomicBool::new(false),
@@ -110,5 +112,13 @@ impl Transport for WebSocketTransport {
 
     fn is_connected(&self) -> bool {
         self.ready.load(Ordering::Relaxed)
+    }
+
+    fn set_id(&mut self, id: u32) {
+        self.id.replace(id);
+    }
+
+    fn get_id(&self) -> u32 {
+        self.id.unwrap()
     }
 }

@@ -1,3 +1,3 @@
 # Run integration example
-run-integration:
-  cd examples/integration && cargo run
+run-integration transport="":
+  cd examples/integration && cargo run -- {{transport}}
