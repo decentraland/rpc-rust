@@ -10,10 +10,11 @@ use crate::{
         CreatePort, CreatePortResponse, DestroyPort, ModuleProcedure, Request, RequestModule,
         RequestModuleResponse, RpcMessageTypes,
     },
+    stream_protocol::StreamProtocol,
     transports::{Transport, TransportEvent},
     types::{
-        Definition, ServerModuleDeclaration, ServerModuleProcedures, ServerStreamsResponse,
-        ServiceModuleDefinition, UnaryResponse,
+        ClientStreamsRequestHandler, Definition, ServerModuleDeclaration, ServerModuleProcedures,
+        ServerStreamsRequestHandler, ServiceModuleDefinition, UnaryRequestHandler,
     },
 };
 
@@ -21,9 +22,10 @@ type PortHandlerFn<Context> = dyn Fn(&mut RpcServerPort<Context>) + Send + Sync 
 
 pub type ServerResult<T> = Result<T, ServerError>;
 
-enum Procedure {
-    Unary(UnaryResponse),
-    ServerStreams(ServerStreamsResponse),
+enum Procedure<Context> {
+    Unary(Arc<UnaryRequestHandler<Context>>),
+    ServerStreams(Arc<ServerStreamsRequestHandler<Context>>),
+    ClientStreams(Arc<ClientStreamsRequestHandler<Context>>),
 }
 
 #[derive(Debug)]
@@ -140,16 +142,15 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
         match self.ports.get(&request.port_id) {
             Some(port) => {
                 let procedure_ctx = self.context.clone();
-                let transport = transport.clone();
-                let procedure_handler =
-                    port.get_procedure(request.procedure_id, request.payload, procedure_ctx)?;
+                let transport_cloned = transport.clone();
+                let procedure_handler = port.get_procedure(request.procedure_id)?;
 
                 match procedure_handler {
                     Procedure::Unary(procedure_handler) => {
                         self.messages_handler.process_unary_request(
-                            transport,
+                            transport_cloned,
                             message_identifier,
-                            procedure_handler,
+                            procedure_handler(request.payload, procedure_ctx),
                         );
                     }
                     Procedure::ServerStreams(procedure_handler) => {
@@ -157,11 +158,43 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                             // Cloned because the receiver of the function is an Arc. It'll be spawned in other thread and it needs to modify its state
                             .clone()
                             .process_server_streams_request(
-                                transport,
+                                transport_cloned,
                                 message_identifier,
                                 request.port_id,
-                                procedure_handler,
+                                procedure_handler(request.payload, procedure_ctx),
                             )
+                    }
+                    Procedure::ClientStreams(procedure_handler) => {
+                        let client_stream_id = request.client_stream;
+                        let stream_protocol = StreamProtocol::new(
+                            transport.clone(),
+                            request.port_id,
+                            request.client_stream,
+                        );
+
+                        let msg_handler = self.messages_handler.clone();
+                        match stream_protocol
+                            .start_processing(move || async move {
+                                msg_handler.unregister_listener(client_stream_id).await
+                            })
+                            .await
+                        {
+                            Ok(listener) => {
+                                self.messages_handler
+                                    .clone()
+                                    .process_client_streams_request(
+                                        transport_cloned,
+                                        message_identifier,
+                                        client_stream_id,
+                                        procedure_handler(
+                                            stream_protocol.to_generator(|item| item),
+                                            procedure_ctx,
+                                        ),
+                                        listener,
+                                    );
+                            }
+                            Err(_) => return Err(ServerError::TransportError),
+                        }
                     }
                 }
 
@@ -302,12 +335,21 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                     .await?
             }
             RpcMessageTypes::DestroyPort => self.handle_destroy_port(&payload)?,
-            RpcMessageTypes::StreamAck => self
-                .messages_handler
-                .clone()
-                .acknowledge_message(message_identifier, payload),
+            RpcMessageTypes::StreamAck => {
+                // Client akcnowledged a stream message sent by Server
+                // and we should notify the waiter for the ack in order to
+                // continue sending streams to Client
+                self.messages_handler
+                    .streams_handler
+                    .clone()
+                    .message_acknowledged_by_peer(message_identifier, payload)
+            }
             RpcMessageTypes::StreamMessage => {
-                // noops
+                // Client has a client stream request type opened and we should
+                // notify our listener for the client message id that we have a new message to process
+                self.messages_handler
+                    .clone()
+                    .notify_new_client_stream(message_identifier, payload)
             }
             _ => {
                 debug!("Unknown message");
@@ -383,6 +425,9 @@ impl<Context> RpcServerPort<Context> {
                             Definition::ServerStreams(procedure) => self
                                 .procedures
                                 .insert(current_id, Definition::ServerStreams(procedure.clone())),
+                            &Definition::ClientStreams(ref procedure) => self
+                                .procedures
+                                .insert(current_id, Definition::ClientStreams(procedure.clone())),
                         };
                         server_module_declaration
                             .procedures
@@ -407,20 +452,18 @@ impl<Context> RpcServerPort<Context> {
     }
 
     /// It will look up the procedure id in the port's `procedures` and return the procedure's handler
-    fn get_procedure(
-        &self,
-        procedure_id: u32,
-        payload: Vec<u8>,
-        context: Arc<Context>,
-    ) -> ServerResult<Procedure> {
+    fn get_procedure(&self, procedure_id: u32) -> ServerResult<Procedure<Context>> {
         match self.procedures.get(&procedure_id) {
             Some(procedure_definition) => match procedure_definition {
                 Definition::Unary(procedure_handler) => {
-                    Ok(Procedure::Unary(procedure_handler(payload, context)))
+                    Ok(Procedure::Unary(procedure_handler.clone()))
                 }
-                Definition::ServerStreams(procedure_handler) => Ok(Procedure::ServerStreams(
-                    procedure_handler(payload, context),
-                )),
+                Definition::ServerStreams(procedure_handler) => {
+                    Ok(Procedure::ServerStreams(procedure_handler.clone()))
+                }
+                Definition::ClientStreams(procedure_handler) => {
+                    Ok(Procedure::ClientStreams(procedure_handler.clone()))
+                }
             },
             _ => Err(ServerError::ProcedureError),
         }

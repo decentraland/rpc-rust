@@ -5,7 +5,6 @@ use prost::Message;
 use tokio::{
     select,
     sync::{
-        mpsc::UnboundedReceiver,
         oneshot::{
             channel as oneshot_channel, Receiver as OneShotReceiver, Sender as OneShotSender,
         },
@@ -25,19 +24,22 @@ use crate::{
         Response, RpcMessageTypes, StreamMessage,
     },
     server::{ServerError, ServerResult},
+    stream_protocol::Generator,
     transports::{Transport, TransportEvent},
-    types::{ServerStreamsResponse, UnaryResponse},
+    types::{ClientStreamsResponse, ServerStreamsResponse, UnaryResponse},
 };
 
 #[derive(Default)]
 pub struct ServerMessagesHandler {
-    ack_listeners: Mutex<HashMap<String, OneShotSender<Vec<u8>>>>,
+    pub streams_handler: Arc<StreamsHandler>,
+    listeners: Mutex<HashMap<u32, AsyncChannelSender<StreamPackage>>>,
 }
 
 impl ServerMessagesHandler {
     pub fn new() -> Self {
         Self {
-            ack_listeners: Mutex::new(HashMap::new()),
+            streams_handler: Arc::new(StreamsHandler::new()),
+            listeners: Mutex::new(HashMap::new()),
         }
     }
 
@@ -86,15 +88,61 @@ impl ServerMessagesHandler {
 
             let stream = procedure_handler.await;
 
-            self.send_server_stream_through_transport(
-                transport,
-                stream,
-                port_id,
-                message_identifier,
-            )
-            .await
-            .unwrap()
+            self.streams_handler
+                .send_stream_through_transport(transport, stream, port_id, message_identifier)
+                .await
+                .unwrap()
         });
+    }
+
+    pub fn process_client_streams_request(
+        self: Arc<Self>,
+        transport: Arc<dyn Transport + Send + Sync>,
+        message_identifier: u32,
+        client_stream_id: u32,
+        procedure_handler: ClientStreamsResponse,
+        listener: AsyncChannelSender<(RpcMessageTypes, u32, StreamMessage)>,
+    ) {
+        tokio::spawn(async move {
+            self.register_listener(client_stream_id, listener).await;
+            let response = procedure_handler.await;
+            self.send_response(transport, message_identifier, response)
+                .await;
+        });
+    }
+
+    pub fn notify_new_client_stream(self: Arc<Self>, message_identifier: u32, payload: Vec<u8>) {
+        tokio::spawn(async move {
+            let lock = self.listeners.lock().await;
+            let listener = lock.get(&message_identifier);
+            if let Some(listener) = listener {
+                listener
+                    .send((
+                        RpcMessageTypes::StreamMessage,
+                        message_identifier,
+                        StreamMessage::decode(payload.as_slice()).unwrap(),
+                    ))
+                    .await
+                    .unwrap()
+            }
+        });
+    }
+
+    pub async fn send_response(
+        &self,
+        transport: Arc<dyn Transport + Send + Sync>,
+        message_identifier: u32,
+        payload: Vec<u8>,
+    ) {
+        let response = Response {
+            message_identifier: build_message_identifier(
+                RpcMessageTypes::Response as u32,
+                message_identifier,
+            ),
+            payload,
+        };
+
+        transport.send(response.encode_to_vec()).await.unwrap();
     }
 
     async fn open_server_stream(
@@ -115,124 +163,23 @@ impl ServerMessagesHandler {
             payload: vec![],
         };
 
-        self.send_stream(transport, opening_message).await
-    }
-
-    async fn close_server_stream(
-        &self,
-        transport: Arc<dyn Transport + Send + Sync>,
-        sequence_id: u32,
-        message_identifier: u32,
-        port_id: u32,
-    ) -> ServerResult<()> {
-        let close_message = StreamMessage {
-            closed: true,
-            ack: false,
-            sequence_id,
-            message_identifier: build_message_identifier(
-                RpcMessageTypes::StreamMessage as u32,
-                message_identifier,
-            ),
-            port_id,
-            payload: vec![],
-        };
-
-        transport.send(close_message.encode_to_vec()).await.unwrap();
-
-        Ok(())
-    }
-
-    async fn send_server_stream_through_transport(
-        &self,
-        transport: Arc<dyn Transport + Send + Sync>,
-        mut stream: UnboundedReceiver<Vec<u8>>,
-        port_id: u32,
-        message_identifier: u32,
-    ) -> ServerResult<()> {
-        let mut sequence_number = 0;
-
-        while let Some(message) = stream.recv().await {
-            sequence_number += 1;
-            let current_message = StreamMessage {
-                closed: false,
-                ack: false,
-                sequence_id: sequence_number,
-                message_identifier: build_message_identifier(
-                    RpcMessageTypes::StreamMessage as u32,
-                    message_identifier,
-                ),
-                port_id,
-                payload: message,
-            };
-            let transport_cloned = transport.clone();
-
-            match self.send_stream(transport_cloned, current_message).await {
-                Ok(listener) => {
-                    let ack_message = match listener.await {
-                        Ok(msg) => match StreamMessage::decode(msg.as_slice()) {
-                            Ok(msg) => msg,
-                            Err(_) => break,
-                        },
-                        Err(_) => break,
-                    };
-                    if ack_message.ack {
-                        continue;
-                    } else if ack_message.closed {
-                        break;
-                    }
-                }
-                Err(err) => {
-                    error!("Error while streaming a server stream {err:?}");
-                    break;
-                }
-            }
-        }
-
-        self.close_server_stream(transport, sequence_number, message_identifier, port_id)
+        self.streams_handler
+            .send_stream(transport, opening_message)
             .await
-            .unwrap();
-
-        Ok(())
     }
 
-    async fn send_stream(
+    pub async fn register_listener(
         &self,
-        transport: Arc<dyn Transport + Send + Sync>,
-        message: StreamMessage,
-    ) -> ServerResult<OneShotReceiver<Vec<u8>>> {
-        let (_, message_id) = parse_message_identifier(message.message_identifier);
-        let (tx, rx) = oneshot_channel();
-        {
-            let mut lock = self.ack_listeners.lock().await;
-            lock.insert(format!("{}{}", message_id, message.sequence_id), tx);
-        }
-
-        transport
-            .send(message.encode_to_vec())
-            .await
-            .map_err(|_| ServerError::TransportError)?;
-
-        Ok(rx)
+        message_id: u32,
+        callback: AsyncChannelSender<(RpcMessageTypes, u32, StreamMessage)>,
+    ) {
+        let mut lock = self.listeners.lock().await;
+        lock.insert(message_id, callback);
     }
 
-    pub fn acknowledge_message(self: Arc<Self>, message_identifier: u32, payload: Vec<u8>) {
-        tokio::spawn(async move {
-            let stream_message = parse_protocol_message::<StreamMessage>(&payload).unwrap().2;
-            let listener = {
-                let mut lock = self.ack_listeners.lock().await;
-                // we should remove ack listener it just for a seq_id
-                lock.remove(&format!(
-                    "{}{}",
-                    message_identifier, stream_message.sequence_id
-                ))
-            };
-            match listener {
-                Some(sender) => sender.send(payload).unwrap(),
-                None => {
-                    debug!("> RpcServer > ack listener not found")
-                }
-            }
-        });
+    pub async fn unregister_listener(&self, message_id: u32) {
+        let mut lock = self.listeners.lock().await;
+        lock.remove(&message_id);
     }
 }
 
@@ -240,6 +187,7 @@ type StreamPackage = (RpcMessageTypes, u32, StreamMessage);
 
 pub struct ClientMessagesHandler {
     pub transport: Arc<dyn Transport + Send + Sync>,
+    pub streams_handler: Arc<StreamsHandler>,
     one_time_listeners: Mutex<HashMap<u32, OneShotSender<Vec<u8>>>>,
     listeners: Mutex<HashMap<u32, AsyncChannelSender<StreamPackage>>>,
     process_cancellation_token: CancellationToken,
@@ -252,6 +200,7 @@ impl ClientMessagesHandler {
             one_time_listeners: Mutex::new(HashMap::new()),
             process_cancellation_token: CancellationToken::new(),
             listeners: Mutex::new(HashMap::new()),
+            streams_handler: Arc::new(StreamsHandler::new()),
         }
     }
 
@@ -313,6 +262,10 @@ impl ClientMessagesHandler {
                                             error.to_string()
                                         );
                                     }
+                                } else {
+                                    self.streams_handler
+                                        .clone()
+                                        .message_acknowledged_by_peer(message_header.1, data)
                                 }
                             }
                         }
@@ -332,6 +285,32 @@ impl ClientMessagesHandler {
                 }
             }
         }
+    }
+
+    pub fn await_server_ack_open_and_send_streams<M: Message + 'static>(
+        self: Arc<Self>,
+        open_promise: OneShotReceiver<Vec<u8>>,
+        client_stream: Generator<M>,
+        port_id: u32,
+        client_message_id: u32,
+    ) {
+        let transport = self.transport.clone();
+        tokio::spawn(async move {
+            let encoded_response = open_promise.await.unwrap();
+            let stream_message = StreamMessage::decode(encoded_response.as_slice()).unwrap();
+
+            if stream_message.closed {
+                return;
+            }
+
+            let new_generator =
+                Generator::from_generator(client_stream, |item| item.encode_to_vec());
+
+            self.streams_handler
+                .send_stream_through_transport(transport, new_generator, port_id, client_message_id)
+                .await
+                .unwrap();
+        });
     }
 
     pub async fn register_one_time_listener(
@@ -355,5 +334,139 @@ impl ClientMessagesHandler {
     pub async fn unregister_listener(&self, message_id: u32) {
         let mut lock = self.listeners.lock().await;
         lock.remove(&message_id);
+    }
+}
+
+#[derive(Default)]
+pub struct StreamsHandler {
+    ack_listeners: Mutex<HashMap<String, OneShotSender<Vec<u8>>>>,
+}
+
+impl StreamsHandler {
+    pub fn new() -> Self {
+        Self {
+            ack_listeners: Mutex::new(HashMap::new()),
+        }
+    }
+
+    async fn close_stream(
+        &self,
+        transport: Arc<dyn Transport + Send + Sync>,
+        sequence_id: u32,
+        message_identifier: u32,
+        port_id: u32,
+    ) -> ServerResult<()> {
+        let close_message = StreamMessage {
+            closed: true,
+            ack: false,
+            sequence_id,
+            message_identifier: build_message_identifier(
+                RpcMessageTypes::StreamMessage as u32,
+                message_identifier,
+            ),
+            port_id,
+            payload: vec![],
+        };
+
+        transport.send(close_message.encode_to_vec()).await.unwrap();
+
+        Ok(())
+    }
+
+    pub async fn send_stream_through_transport(
+        &self,
+        transport: Arc<dyn Transport + Send + Sync>,
+        mut stream: Generator<Vec<u8>>,
+        port_id: u32,
+        message_identifier: u32,
+    ) -> ServerResult<()> {
+        let mut sequence_number = 0;
+
+        while let Some(message) = stream.next().await {
+            sequence_number += 1;
+            let current_message = StreamMessage {
+                closed: false,
+                ack: false,
+                sequence_id: sequence_number,
+                message_identifier: build_message_identifier(
+                    RpcMessageTypes::StreamMessage as u32,
+                    message_identifier,
+                ),
+                port_id,
+                payload: message,
+            };
+            let transport_cloned = transport.clone();
+
+            match self.send_stream(transport_cloned, current_message).await {
+                Ok(listener) => {
+                    let ack_message = match listener.await {
+                        Ok(msg) => match StreamMessage::decode(msg.as_slice()) {
+                            Ok(msg) => msg,
+                            Err(_) => break,
+                        },
+                        Err(_) => break,
+                    };
+                    if ack_message.ack {
+                        continue;
+                    } else if ack_message.closed {
+                        break;
+                    }
+                }
+                Err(err) => {
+                    error!("Error while streaming a server stream {err:?}");
+                    break;
+                }
+            }
+        }
+
+        self.close_stream(transport, sequence_number, message_identifier, port_id)
+            .await
+            .unwrap();
+
+        Ok(())
+    }
+
+    async fn send_stream(
+        &self,
+        transport: Arc<dyn Transport + Send + Sync>,
+        message: StreamMessage,
+    ) -> ServerResult<OneShotReceiver<Vec<u8>>> {
+        let (_, message_id) = parse_message_identifier(message.message_identifier);
+        let (tx, rx) = oneshot_channel();
+        {
+            let mut lock = self.ack_listeners.lock().await;
+            lock.insert(format!("{}{}", message_id, message.sequence_id), tx);
+        }
+
+        transport
+            .send(message.encode_to_vec())
+            .await
+            .map_err(|_| ServerError::TransportError)?;
+
+        Ok(rx)
+    }
+
+    pub fn message_acknowledged_by_peer(
+        self: Arc<Self>,
+        message_identifier: u32,
+        payload: Vec<u8>,
+    ) {
+        tokio::spawn(async move {
+            let stream_message = parse_protocol_message::<StreamMessage>(&payload).unwrap().2;
+            let listener = {
+                let mut lock = self.ack_listeners.lock().await;
+                // we should remove ack listener it just for a seq_id
+                lock.remove(&format!(
+                    "{}{}",
+                    message_identifier, stream_message.sequence_id
+                ))
+            };
+            match listener {
+                Some(sender) => sender.send(payload).unwrap(),
+                None => {
+                    debug!("> Streams Handler > ack listener not found")
+                }
+            }
+        });
     }
 }

@@ -57,6 +57,7 @@ message Request {
   fixed32	message_identifier = 1;
   fixed32	port_id = 2;
   fixed32	procedure_id = 4;
+  fixed32	client_stream = 5;
   bytes	payload = 6;
 }
 

@@ -2,12 +2,11 @@
 use std::sync::Arc;
 
 use prost::Message;
-use rpc_rust::{server::RpcServerPort, types::ServiceModuleDefinition};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use rpc_rust::{server::RpcServerPort, stream_protocol::Generator, types::ServiceModuleDefinition};
 
 use crate::{Book, GetBookRequest, QueryBooksRequest};
 
-use super::ServerStreamResponse;
+use super::{ClientStreamRequest, ServerStreamResponse};
 
 pub const SERVICE: &str = "BookService";
 
@@ -19,6 +18,11 @@ pub trait BookServiceInterface<Context> {
         request: QueryBooksRequest,
         context: Arc<Context>,
     ) -> ServerStreamResponse<Book>;
+    async fn get_book_stream(
+        &self,
+        request: ClientStreamRequest<GetBookRequest>,
+        context: Arc<Context>,
+    ) -> Book;
 }
 
 pub struct BookServiceCodeGen {}
@@ -52,24 +56,31 @@ impl BookServiceCodeGen {
         service_def.add_server_streams("QueryBooks", move |request, context| {
             let service = service.clone();
             Box::pin(async move {
-                let (tx, rx): (UnboundedSender<Vec<u8>>, UnboundedReceiver<Vec<u8>>) =
-                    unbounded_channel();
-                let mut server_stream = service
+                let server_streams = service
                     .query_books(
                         QueryBooksRequest::decode(request.as_slice()).unwrap(),
                         context,
                     )
                     .await;
 
-                tokio::spawn(async move {
-                    while let Some(book) = server_stream.recv().await {
-                        tx.send(book.encode_to_vec()).unwrap();
-                    }
-                });
-
-                rx
+                // Transforming and filling the new generator is spawned so the response it quick
+                Generator::from_generator(server_streams, |item| item.encode_to_vec())
             })
         });
+
+        let serv = Arc::clone(&shareable_service);
+        service_def.add_client_streams("GetBookStream", move |request, context| {
+            let serv = serv.clone();
+            Box::pin(async move {
+                let generator = Generator::from_generator(request, |item| {
+                    GetBookRequest::decode(item.as_slice()).unwrap()
+                });
+
+                let response = serv.get_book_stream(generator, context).await;
+                response.encode_to_vec()
+            })
+        });
+
         port.register_module(SERVICE.to_string(), service_def)
     }
 }
