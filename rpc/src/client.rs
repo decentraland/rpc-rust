@@ -236,6 +236,45 @@ impl RpcClientModule {
         Ok(returned_type)
     }
 
+    pub async fn call_bidir_streams_procedure<
+        M: Message + 'static,
+        ReturnType: Message + Default + 'static,
+    >(
+        &self,
+        procedure_name: &str,
+        stream: Generator<M>,
+    ) -> ClientResult<Generator<ReturnType>> {
+        let client_message_id = self.client_request_dispatcher.next_message_id().await;
+        self.client_request_dispatcher
+            .send_client_streams(self.port_id, client_message_id, stream)
+            .await;
+        let procedure_id = self.get_procedure_id(procedure_name)?;
+
+        let response: (u32, u32, Response) = self
+            .client_request_dispatcher
+            .request(|message_id| Request {
+                port_id: self.port_id,
+                message_identifier: build_message_identifier(
+                    RpcMessageTypes::Request as u32,
+                    message_id,
+                ),
+                procedure_id,
+                payload: vec![],
+                client_stream: client_message_id,
+            })
+            .await?;
+
+        let stream_protocol = self
+            .client_request_dispatcher
+            .stream_server_messages(self.port_id, response.1)
+            .await?;
+
+        let generator =
+            stream_protocol.to_generator(|item| ReturnType::decode(item.as_slice()).unwrap());
+
+        Ok(generator)
+    }
+
     async fn call_procedure<M: Message, ReturnType: Message + Default>(
         &self,
         procedure_name: &str,
@@ -310,7 +349,7 @@ impl ClientRequestDispatcher {
             debug!("Message ID: {}", message_id);
             let payload = cb(message_id);
             (payload, message_id)
-        }; // Force to drop the mutex for other concurrent operations
+        };
 
         let payload = payload.encode_to_vec();
         self.messages_handler

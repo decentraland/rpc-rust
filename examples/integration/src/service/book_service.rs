@@ -63,4 +63,27 @@ impl BookServiceInterface<MyExampleContext> for BookService {
 
         ctx.hardcoded_database[0].clone()
     }
+
+    async fn query_books_streams(
+        &self,
+        mut request: ClientStreamRequest<GetBookRequest>,
+        ctx: Arc<MyExampleContext>,
+    ) -> ServerStreamResponse<Book> {
+        println!("> BookService > bidir stream > QueryBooksStream");
+        let (generator, generator_yielder) = Generator::create();
+        // Spawn for a quick response
+        tokio::spawn(async move {
+            while let Some(message) = request.next().await {
+                let book = ctx
+                    .hardcoded_database
+                    .iter()
+                    .find(|book| book.isbn == message.isbn);
+                if let Some(book) = book {
+                    sleep(Duration::from_millis(500)).await; // Simulating DB
+                    generator_yielder.insert(book.clone()).await.unwrap()
+                }
+            }
+        });
+        generator
+    }
 }

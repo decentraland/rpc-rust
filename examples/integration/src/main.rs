@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use integration::{
     codegen::{
         client::{BookServiceClient, BookServiceClientInterface},
@@ -17,7 +19,7 @@ use rpc_rust::{
         Transport,
     },
 };
-use tokio::join;
+use tokio::{join, time::sleep};
 
 fn create_db() -> Vec<Book> {
     let book_1 = Book {
@@ -29,25 +31,25 @@ fn create_db() -> Vec<Book> {
     let book_2 = Book {
         author: "mr jobs".to_string(),
         title: "Rust: how do futures work under the hood?".to_string(),
-        isbn: 1010,
+        isbn: 1001,
     };
 
     let book_3 = Book {
         author: "mr robot".to_string(),
         title: "Create a robot from scrath".to_string(),
-        isbn: 1020,
+        isbn: 1002,
     };
 
     let book_4 = Book {
         author: "vitalik".to_string(),
         title: "Blockchain 101".to_string(),
-        isbn: 1040,
+        isbn: 1003,
     };
 
     let book_5 = Book {
         author: "buterin".to_string(),
         title: "Smart Contracts 101".to_string(),
-        isbn: 1050,
+        isbn: 1004,
     };
     vec![book_1, book_2, book_3, book_4, book_5]
 }
@@ -142,12 +144,12 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
             .await
             .unwrap();
 
-        println!("> Book Service > Unary > GetBook");
+        println!("> Unary > Request > GetBook");
 
         let get_book_payload = GetBookRequest { isbn: 1000 };
         let response = book_service_module.get_book(get_book_payload).await;
 
-        println!("> Book Service > Unary > Response: {:?}", response);
+        println!("> Unary > Response > GetBook: {:?}", response);
 
         assert_eq!(response.isbn, 1000);
         assert_eq!(response.title, "Rust: crash course");
@@ -163,7 +165,7 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
             book_service_module.get_book(get_book_payload_2)
         );
 
-        println!("> Book Service > Server Streams > QueryBooks");
+        println!("> Server Streams > Request > QueryBooks");
 
         let query_books_payload = QueryBooksRequest {
             author_prefix: "mr".to_string(),
@@ -172,17 +174,15 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
         let mut response_stream = book_service_module.query_books(query_books_payload).await;
 
         while let Some(book) = response_stream.next().await {
-            println!(
-                "> Book Service > Server Streams > QueryBooks > Response {:?}",
-                book
-            )
+            println!("> Server Streams > Response > QueryBooks {:?}", book)
         }
 
-        println!("> Book Service > Client Streams > Get Book Stream");
+        println!("> Client Streams > Request > GetBookStream");
         let (generator, generator_yielder) = Generator::create();
         tokio::spawn(async move {
             for _ in 0..4 {
-                println!("> Book Service > Client Stream > Sending stream payload");
+                sleep(Duration::from_millis(300)).await;
+                println!("> Client Stream > GetBookStream > Sending stream payload");
                 generator_yielder
                     .insert(GetBookRequest { isbn: 1000 })
                     .await
@@ -191,7 +191,25 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
         });
         let response = book_service_module.get_book_stream(generator).await;
 
-        println!("> Book Service > Client Streams > Get Book Stream > Response {response:?}");
+        println!("> Client Streams > Response > GetBookStream {response:?}");
+
+        println!("> BiDir Streams > Request > QueryBooksStream");
+        let (generator, generator_yielder) = Generator::create();
+        tokio::spawn(async move {
+            for i in 0..4 {
+                sleep(Duration::from_millis(300)).await;
+                println!("> BiDir Stream > QueryBooksStream > Sending stream payload");
+                generator_yielder
+                    .insert(GetBookRequest { isbn: (1000 + i) })
+                    .await
+                    .unwrap();
+            }
+        });
+        let mut response = book_service_module.query_books_streams(generator).await;
+
+        while let Some(book) = response.next().await {
+            println!("> BiDir Streams > Response > QueryBooksStream {:?}", book)
+        }
     });
 
     let server_handle = tokio::spawn(async {
