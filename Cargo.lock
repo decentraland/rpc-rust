@@ -348,6 +348,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "integration-multi-lang"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "async-trait",
+ "bytes",
+ "futures-channel",
+ "futures-util",
+ "prost",
+ "prost-build",
+ "quinn",
+ "rcgen",
+ "rpc-rust",
+ "rustls",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+]
+
+[[package]]
 name = "itertools"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

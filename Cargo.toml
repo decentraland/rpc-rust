@@ -1,8 +1,8 @@
 [workspace]
 members = [
-
   "rpc",
   "examples/integration",
+  "examples/integration-multi-lang"
 ]
 
 [workspace.dependencies]
