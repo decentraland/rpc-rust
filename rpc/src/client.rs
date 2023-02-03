@@ -346,8 +346,14 @@ impl RpcClientModule {
     }
 }
 
+/// It contains the client logic to send requests, send client streams, process server streams.
+///
+/// It's the data structure shared by `RpcClient`, `RpcClientPort` and `RpcClientModule` to send every request to the `RpcServer`.
+///
 struct ClientRequestDispatcher {
+    /// The message id assigned to each request
     next_message_id: Mutex<u32>,
+    /// The data structure that actually contains the transport given to the `RpcClient` and in charge of listening and processing responses from `RpcServer`
     messages_handler: Arc<ClientMessagesHandler>,
 }
 
@@ -367,6 +373,7 @@ impl ClientRequestDispatcher {
         self.messages_handler.stop()
     }
 
+    /// Calculates the next id for a request
     async fn next_message_id(&self) -> u32 {
         let mut lock = self.next_message_id.lock().await;
         let message_id = *lock;
@@ -374,6 +381,7 @@ impl ClientRequestDispatcher {
         message_id
     }
 
+    /// Sends a request and registers a one time listener for the response using the `message_handler`
     async fn request<
         ReturnType: Message + Default,
         M: Message + Default,
@@ -410,6 +418,10 @@ impl ClientRequestDispatcher {
         }
     }
 
+    /// Creates and puts to run the backround task to receive the streams from the `RpcServer`.
+    ///
+    /// It registeres a listener for every stream message coming from the reserver with the `message_id` given as a second parameter
+    ///
     async fn stream_server_messages(
         &self,
         port_id: u32,
@@ -438,6 +450,7 @@ impl ClientRequestDispatcher {
         }
     }
 
+    /// Puts to run a background task to wait the `RpcServer` acknowlege the stream openning and start sending client streams to the `RpcServer`
     async fn send_client_streams<M: Message + 'static>(
         &self,
         port_id: u32,

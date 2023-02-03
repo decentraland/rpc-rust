@@ -212,11 +212,42 @@ impl ServerMessagesHandler {
 
 type StreamPackage = (RpcMessageTypes, u32, StreamMessage);
 
+/// `ClientMessagesHandler` is in charge of sending message through the transport, processing the responses and sending them through their attached listeners
+///
+/// It runs a background task listening for new messages (responses) in the given transport.
+///
+/// It's the data structure that actually owns the Transport attached to a `RpcClient`. The transport is drilled down up to get to `ClientMEssagesHandler`
+///
+///
 pub struct ClientMessagesHandler {
+    /// Transport received by a `RpcClient`
     pub transport: Arc<dyn Transport + Send + Sync>,
+    /// Data structure in charge of handling all messages related to streams
     pub streams_handler: Arc<StreamsHandler>,
+    /// One time listeners for responses.
+    ///
+    /// The listeners here are removed once the transport receives the response for their message id
+    ///
+    /// The raw response (`Vec<u8>`) is sent through the listener
+    ///
+    /// - key : Message id assigned to a request. A response is returned with the same message id
+    /// - value : A oneshot sender from a oneshot channel. It expects the raw response body (`Vec<u8>`) and the function awaiting to receive this is in chage of decoding the raw response body
+    ///
     one_time_listeners: Mutex<HashMap<u32, OneShotSender<Vec<u8>>>>,
+    /// Listeners for streams.
+    ///
+    /// A listeners is called every time that the transport receives a response with the listener's message id
+    ///
+    /// The raw response (`Vec<u8>`) is sent through the listener
+    ///
+    /// - key : Message id assigned to a stream request
+    /// - value : An `async_channel` sender from `async_channel` channel. It expects the raw response body (`Vec<u8>`) and a `StreamProtocol` instance awaiting to receive this is in chage of decoding the raw response body
+    ///
     listeners: Mutex<HashMap<u32, AsyncChannelSender<StreamPackage>>>,
+    /// Process cancellation token is used for cancelling the background task spawned with `ClientMessagesHandler::start(self: Arc<Self>)`
+    ///
+    /// If the cancellation token is never triggered, the background task cotinues until the `RpcClient` owning this is dropped
+    ///
     process_cancellation_token: CancellationToken,
 }
 
@@ -231,6 +262,7 @@ impl ClientMessagesHandler {
         }
     }
 
+    /// Starts a background task for listening responses in the transport coping (Arc) an existing instance
     pub fn start(self: Arc<Self>) {
         let token = self.process_cancellation_token.clone();
         tokio::spawn(async move {
@@ -245,10 +277,12 @@ impl ClientMessagesHandler {
         });
     }
 
+    /// Stops the background task listening responses in the transport
     pub fn stop(&self) {
         self.process_cancellation_token.cancel();
     }
 
+    /// In charge of looping in the transport wating for new responses and sending the response through a listener
     async fn process(&self) {
         loop {
             match self.transport.receive().await {
