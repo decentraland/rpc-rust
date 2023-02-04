@@ -13,7 +13,7 @@ futures-channel = "0.3"
 futures-util = {version = "0.3", default-features = false, features = ["sink", "std"]}
 log = "0.4.17"
 prost = "0.11.5"
-tokio = {version = "1.0.0", default-features = false, features = ["io-util", "io-std", "macros", "net", "rt-multi-thread", "time", "sync"]}
+tokio = {version = "1.25.0", default-features = false, features = ["io-util", "io-std", "macros", "net", "rt-multi-thread", "time", "sync"]}
 tokio-tungstenite = "*"
 tokio-util = "0.7.4"
 quinn = "*"
