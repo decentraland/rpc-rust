@@ -19,7 +19,8 @@ use rpc_rust::{
         Transport,
     },
 };
-use tokio::{join, time::sleep};
+use tokio::{join, select, time::sleep};
+use tokio_util::sync::CancellationToken;
 
 fn create_db() -> Vec<Book> {
     let book_1 = Book {
@@ -130,8 +131,10 @@ async fn main() {
 async fn run_with_transports<T: Transport + Send + Sync + 'static>(
     (client_transport, server_transport): (T, T),
 ) {
+    let cancellation_token = CancellationToken::new();
     // Another client to test multiple transports server feature
     let client_2_transport = create_memory_transports();
+    let cloned_token = cancellation_token.clone();
     let client_handle = tokio::spawn(async move {
         let mut client = RpcClient::new(client_transport).await.unwrap();
 
@@ -264,6 +267,7 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
         while let Some(book) = response.next().await {
             println!("> BiDir Streams > Response > QueryBooksStream {:?}", book)
         }
+        cloned_token.cancel();
     });
 
     let server_handle = tokio::spawn(async {
@@ -302,5 +306,12 @@ async fn run_with_transports<T: Transport + Send + Sync + 'static>(
     });
 
     client_handle.await.unwrap();
-    server_handle.await.unwrap();
+    select! {
+        _ = cancellation_token.cancelled() => {
+            println!("Example finished manually")
+        },
+        _ =  server_handle => {
+            println!("Server terminated unexpectedly")
+        }
+    }
 }

@@ -1,9 +1,5 @@
 use std::{collections::HashMap, sync::Arc, u8};
 
-use async_channel::{
-    unbounded as create_unbounded_asynch_channel, Receiver as AsyncChannelReceiver,
-    Sender as AsyncChannelSender,
-};
 use log::{debug, error};
 use prost::{alloc::vec::Vec, Message};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -55,8 +51,6 @@ type TransportMessage<T> = (TransportID, T);
 
 enum ServerEvents {
     NewTransport(Arc<dyn Transport + Send + Sync>),
-    TransportFinished,
-    Terminated,
 }
 
 #[derive(Debug)]
@@ -135,17 +129,15 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
         // create transports notifier. This channel will be in charge of sending all messages (and errors) that all the transports attached to server receieve
         // We use async_channel crate for this channel because we want our receiver to be cloned so that we can close it when no more transports are open
         // And after that, our server can exit because it knows that it wont receive more notifications
-        let (transports_notifier, transports_notification_receiver) =
-            create_unbounded_asynch_channel::<TransportNotification>();
+        let (transports_notifier, mut transports_notification_receiver) =
+            unbounded_channel::<TransportNotification>();
         // Spawn a task to process ServerEvents in background
-        self.process_server_events(
-            transports_notifier,
-            transports_notification_receiver.clone(),
-        );
+        self.process_server_events(transports_notifier);
         // loop on transports_notifier
         loop {
+            // A transport here is the equivalent to a new connection in a common HTTP server
             match transports_notification_receiver.recv().await {
-                Ok(notification) => match notification {
+                Some(notification) => match notification {
                     TransportNotification::Ok((transport_id, event)) => match event {
                         TransportEvent::Connect => {
                             // Response back to the client to finally establish the connection
@@ -174,7 +166,7 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                         break;
                     }
                 },
-                Err(_) => {
+                None => {
                     error!("Transport error");
                     break;
                 }
@@ -184,42 +176,25 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
 
     fn process_server_events(
         &mut self,
-        transports_notifier: AsyncChannelSender<TransportNotification>,
-        transports_notification_receiver: AsyncChannelReceiver<TransportNotification>,
+        transports_notifier: UnboundedSender<TransportNotification>,
     ) {
         let mut events_receiver = self.events_channel.1.take().unwrap();
-        let events_sender = self.events_channel.0.clone();
         tokio::spawn(async move {
-            let mut transport_finished_events = 0;
-            let mut running_transport = 0;
             while let Some(event) = events_receiver.recv().await {
                 match event {
                     ServerEvents::NewTransport(transport) => {
                         let tx_cloned = transports_notifier.clone();
-                        let event_sender_cloned = events_sender.clone();
-                        running_transport += 1;
                         tokio::spawn(async move {
                             loop {
                                 match transport.receive().await {
                                     Ok(event) => {
                                         if matches!(event, TransportEvent::Close) {
-                                            match event_sender_cloned
-                                                .send(ServerEvents::TransportFinished)
-                                            {
-                                                Ok(()) => {}
-                                                Err(_) => {
-                                                    break;
-                                                }
-                                            }
                                             break;
                                         }
-                                        match tx_cloned
-                                            .send(TransportNotification::Ok((
-                                                transport.get_id(),
-                                                event,
-                                            )))
-                                            .await
-                                        {
+                                        match tx_cloned.send(TransportNotification::Ok((
+                                            transport.get_id(),
+                                            event,
+                                        ))) {
                                             Ok(_) => {}
                                             Err(_) => {
                                                 error!("Error while sending new message from transport to server via notifier");
@@ -228,9 +203,7 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                                         }
                                     }
                                     Err(error) => {
-                                        match tx_cloned
-                                            .send(TransportNotification::Err((1, error)))
-                                            .await
+                                        match tx_cloned.send(TransportNotification::Err((1, error)))
                                         {
                                             Ok(_) => {}
                                             Err(_) => {
@@ -242,21 +215,6 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                                 }
                             }
                         });
-                    }
-                    ServerEvents::TransportFinished => {
-                        transport_finished_events += 1;
-                        if running_transport == transport_finished_events {
-                            match events_sender.send(ServerEvents::Terminated) {
-                                Ok(_) => {}
-                                Err(_) => {
-                                    error!("Error while sending terminated event from event collector task")
-                                }
-                            }
-                        }
-                    }
-                    ServerEvents::Terminated => {
-                        transports_notification_receiver.close();
-                        events_receiver.close();
                     }
                 }
             }
