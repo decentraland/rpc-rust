@@ -3,7 +3,7 @@ use integration_multi_lang::{
 };
 use rpc_rust::{
     server::{RpcServer, RpcServerPort},
-    transports::web_socket::WebSocketTransport,
+    transports::web_socket::{WebSocketServer, WebSocketTransport},
 };
 
 fn create_db() -> Vec<Book> {
@@ -46,12 +46,10 @@ async fn main() {
 }
 
 async fn run_ws_example() {
-    let server_handle = tokio::spawn(async { WebSocketTransport::listen("127.0.0.1:8080").await });
+    let (ws_server, mut connection_listener) = WebSocketServer::new("127.0.0.1:8080");
 
-    let server_transport = server_handle
-        .await
-        .expect("Thread to finish")
-        .expect("Server to accept client connection");
+    // Listen in background task
+    ws_server.listen().await.unwrap();
 
     println!("> RpcServer > Server transport is ready");
 
@@ -60,20 +58,25 @@ async fn run_ws_example() {
     };
 
     let mut server = RpcServer::create(ctx);
-
     server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
         BookServiceCodeGen::register_service(port, book_service::BookService {})
     });
 
-    match server.attach_transport(server_transport) {
-        Ok(_) => {
-            println!("> RpcServer > transport attached successfully");
+    let server_events_sender = server.get_server_events_sender();
+    tokio::spawn(async move {
+        while let Some(Ok(connection)) = connection_listener.recv().await {
+            let transport = WebSocketTransport::new(connection);
+            match server_events_sender.send_attach_transport(transport) {
+                Ok(_) => {
+                    println!("> RpcServer > transport attached successfully");
+                }
+                Err(_) => {
+                    println!("> RpcServer > unable to attach transport");
+                    panic!()
+                }
+            }
         }
-        Err(_) => {
-            println!("> RpcServer > unable to attach transport");
-            panic!()
-        }
-    }
+    });
 
     server.run().await;
 }

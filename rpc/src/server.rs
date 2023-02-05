@@ -43,20 +43,69 @@ pub enum ServerError {
     UnknownMessage,
     InvalidHeader,
     ProcedureError,
+    UnableToNofifyServer,
 }
 
 type TransportID = u32;
 
-type TransportMessage<T> = (TransportID, T);
+type TransportMessage<T> = (Arc<dyn Transport + Send + Sync>, T);
 
+/// Events that the `RpcServer` has to react to
 enum ServerEvents {
+    AttachTransport(Arc<dyn Transport + Send + Sync>),
     NewTransport(Arc<dyn Transport + Send + Sync>),
 }
 
-#[derive(Debug)]
+/// Notifications about Transports connected to the `RpcServer`
 enum TransportNotification {
-    Ok(TransportMessage<TransportEvent>),
-    Err(TransportMessage<TransportError>),
+    /// New message received from a transport
+    NewMessage(TransportMessage<TransportEvent>),
+    /// New error received from a transport
+    NewErrorMessage(TransportMessage<TransportError>),
+    /// A Notification for when a `ServerEvents::AttachTransport` is received in order to attach a transport to the server `RpcServer::attach_transport` and make it run to receive messages
+    MustAttachTransport(Arc<dyn Transport + Send + Sync>),
+}
+
+/// Structure to send events to the server from outside
+pub struct ServerEventsSender(UnboundedSender<ServerEvents>);
+
+impl ServerEventsSender {
+    /// Sends a `ServerEvents::AttachTransport` to the `RpcServer`
+    ///
+    /// This allows you to notify the server that has to attach a new transport and make it run to listen for new messages
+    ///
+    /// This is equivalent to `RpcServer::attach_transport` but it can be used to attach a transport to the `RpcServer` from another spawned thread (or background task)
+    ///
+    /// This allows you to listen on a port in a background task for external connections and attach multiple transports that want to connect to the server
+    pub fn send_attach_transport<T: Transport + Send + Sync + 'static>(
+        &self,
+        transport: T,
+    ) -> ServerResult<()> {
+        if self
+            .0
+            .send(ServerEvents::AttachTransport(Arc::new(transport)))
+            .is_err()
+        {
+            return Err(ServerError::UnableToNofifyServer);
+        }
+        Ok(())
+    }
+
+    fn send_new_transport(&self, transport: Arc<dyn Transport + Send + Sync>) -> ServerResult<()> {
+        match self.0.send(ServerEvents::NewTransport(transport)) {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                error!("Error on attaching port");
+                Err(ServerError::TransportNotAttached)
+            }
+        }
+    }
+}
+
+impl Clone for ServerEventsSender {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
 }
 
 /// RpcServer receives and process different requests from the RpcClient
@@ -76,12 +125,12 @@ pub struct RpcServer<Context> {
     ///
     /// It's stored inside an `Arc` because it'll be shared between threads
     messages_handler: Arc<ServerMessagesHandler>,
-    /// Channel to collect new `ServerEvents`
-    events_channel: (
-        UnboundedSender<ServerEvents>,
-        // It's an Option so that we can take ownership of it without problem
-        Option<UnboundedReceiver<ServerEvents>>,
-    ),
+    /// `ServerEventsSender` structure that contains the sender half of a channel to send `ServerEvents` to the `RpcServer`
+    server_events_sender: ServerEventsSender,
+    /// The receiver half of a channel that receives `ServerEvents` which the `RpcServer` has to react to
+    ///
+    /// It's an Option so that we can take ownership of it and remove it from the `RpcServer`, and make it run in a background task
+    server_events_receiver: Option<UnboundedReceiver<ServerEvents>>,
     /// The id that will be assigned if a new transport is a attached
     next_transport_id: u32,
 }
@@ -95,24 +144,42 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
             context: Arc::new(ctx),
             messages_handler: Arc::new(ServerMessagesHandler::new()),
             next_transport_id: 1,
-            events_channel: (channel.0, Some(channel.1)),
+            server_events_sender: ServerEventsSender(channel.0),
+            server_events_receiver: Some(channel.1),
         }
     }
 
-    /// Attach the server half of the transport for Client<>Server comms
+    /// Get a `ServerEventsSender` to send allowed server events from outside
+    pub fn get_server_events_sender(&self) -> ServerEventsSender {
+        self.server_events_sender.clone()
+    }
+
+    /// Attaches the server half of the transport for Client<>Server communications
+    ///
+    /// It differs from sending the `ServerEvents::AtacchTransport` because it can only be used to attach transport from the current thread where the `RpcServer` was initalized due to the mutably borrow
+    ///
     pub fn attach_transport<T: Transport + Send + Sync + 'static>(
         &mut self,
-        mut transport: T,
+        transport: T,
     ) -> ServerResult<()> {
-        let current_id = self.next_transport_id;
-        transport.set_id(current_id);
         let transport = Arc::new(transport);
+        self.new_transport_attached(transport)
+    }
+
+    /// Sends the `ServerEvents::NewTransport` in order to make this new transport run in backround to receive its messages
+    ///
+    /// This function is used when a transport is attached with`RpcServer::attach_transport` and with the `ServerEventsSender::send_attach_transport`
+    ///
+    fn new_transport_attached(
+        &mut self,
+        transport: Arc<dyn Transport + Send + Sync>,
+    ) -> ServerResult<()> {
         match self
-            .events_channel
-            .0
-            .send(ServerEvents::NewTransport(transport.clone()))
+            .server_events_sender
+            .send_new_transport(transport.clone())
         {
             Ok(_) => {
+                let current_id = self.next_transport_id;
                 self.transports.insert(current_id, transport);
                 self.next_transport_id += 1;
                 Ok(())
@@ -138,11 +205,10 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
             // A transport here is the equivalent to a new connection in a common HTTP server
             match transports_notification_receiver.recv().await {
                 Some(notification) => match notification {
-                    TransportNotification::Ok((transport_id, event)) => match event {
+                    TransportNotification::NewMessage((transport, event)) => match event {
                         TransportEvent::Connect => {
                             // Response back to the client to finally establish the connection
                             // on both ends
-                            let transport = self.transports.get(&transport_id).unwrap();
                             transport
                                 .send(vec![0])
                                 .await
@@ -150,7 +216,6 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                         }
                         TransportEvent::Error(err) => error!("Transport error {}", err),
                         TransportEvent::Message(payload) => {
-                            let transport = self.transports.get(&transport_id).unwrap().clone();
                             match self.handle_message(transport, payload).await {
                                 Ok(_) => debug!("Transport message handled!"),
                                 Err(e) => error!("Failed to handle message: {:?}", e),
@@ -158,16 +223,23 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                         }
                         TransportEvent::Close => {
                             error!("Transport closed");
-                            break;
+                            continue;
                         }
                     },
-                    TransportNotification::Err(error) => {
+                    TransportNotification::NewErrorMessage((_, error)) => {
+                        // TODO: Send error?
                         error!("Error on transport {error:?}");
-                        break;
+                        continue;
+                    }
+                    TransportNotification::MustAttachTransport(transport) => {
+                        if let Err(error) = self.new_transport_attached(transport) {
+                            error!("Error on attaching transport to the server in order to receive message from it: {error:?}");
+                            continue;
+                        }
                     }
                 },
                 None => {
-                    error!("Transport error");
+                    error!("Transport notification receiver error");
                     break;
                 }
             }
@@ -178,7 +250,7 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
         &mut self,
         transports_notifier: UnboundedSender<TransportNotification>,
     ) {
-        let mut events_receiver = self.events_channel.1.take().unwrap();
+        let mut events_receiver = self.server_events_receiver.take().unwrap();
         tokio::spawn(async move {
             while let Some(event) = events_receiver.recv().await {
                 match event {
@@ -191,8 +263,8 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                                         if matches!(event, TransportEvent::Close) {
                                             break;
                                         }
-                                        match tx_cloned.send(TransportNotification::Ok((
-                                            transport.get_id(),
+                                        match tx_cloned.send(TransportNotification::NewMessage((
+                                            transport.clone(),
                                             event,
                                         ))) {
                                             Ok(_) => {}
@@ -203,8 +275,12 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                                         }
                                     }
                                     Err(error) => {
-                                        match tx_cloned.send(TransportNotification::Err((1, error)))
-                                        {
+                                        match tx_cloned.send(
+                                            TransportNotification::NewErrorMessage((
+                                                transport.clone(),
+                                                error,
+                                            )),
+                                        ) {
                                             Ok(_) => {}
                                             Err(_) => {
                                                 error!("Error while sending an error from transport to server via notifier");
@@ -215,6 +291,19 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                                 }
                             }
                         });
+                    }
+                    ServerEvents::AttachTransport(transport) => {
+                        match transports_notifier
+                            .send(TransportNotification::MustAttachTransport(transport))
+                        {
+                            Ok(_) => {}
+                            Err(_) => {
+                                error!(
+                                    "Error while notifying the server to attach a new transport"
+                                );
+                                continue;
+                            }
+                        };
                     }
                 }
             }
