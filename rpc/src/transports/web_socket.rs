@@ -87,12 +87,14 @@ impl WebSocketServer {
                             continue;
                         };
                     }
-                    _ => {
+                    Err(error) => {
                         if tx_on_connection_listener
                             .send(Err(TransportError::Connection))
                             .is_err()
                         {
-                            error!("WS Server: Error on sending the error to the listener")
+                            error!(
+                                "WS Server: Error on sending the error to the listener: {error:?}"
+                            )
                         }
                     }
                 }

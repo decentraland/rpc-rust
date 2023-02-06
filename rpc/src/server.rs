@@ -53,7 +53,7 @@ type TransportMessage<T> = (Arc<dyn Transport + Send + Sync>, T);
 /// Events that the `RpcServer` has to react to
 enum ServerEvents {
     AttachTransport(Arc<dyn Transport + Send + Sync>),
-    NewTransport(Arc<dyn Transport + Send + Sync>),
+    NewTransport(TransportID, Arc<dyn Transport + Send + Sync>),
 }
 
 /// Notifications about Transports connected to the `RpcServer`
@@ -64,6 +64,8 @@ enum TransportNotification {
     NewErrorMessage(TransportMessage<TransportError>),
     /// A Notification for when a `ServerEvents::AttachTransport` is received in order to attach a transport to the server `RpcServer::attach_transport` and make it run to receive messages
     MustAttachTransport(Arc<dyn Transport + Send + Sync>),
+    /// Close Transport Notification in order to remove it from the `RpcServer` state
+    CloseTransport(TransportID),
 }
 
 /// Structure to send events to the server from outside
@@ -91,8 +93,12 @@ impl ServerEventsSender {
         Ok(())
     }
 
-    fn send_new_transport(&self, transport: Arc<dyn Transport + Send + Sync>) -> ServerResult<()> {
-        match self.0.send(ServerEvents::NewTransport(transport)) {
+    fn send_new_transport(
+        &self,
+        id: TransportID,
+        transport: Arc<dyn Transport + Send + Sync>,
+    ) -> ServerResult<()> {
+        match self.0.send(ServerEvents::NewTransport(id, transport)) {
             Ok(_) => Ok(()),
             Err(_) => {
                 error!("Error on attaching port");
@@ -174,12 +180,12 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
         &mut self,
         transport: Arc<dyn Transport + Send + Sync>,
     ) -> ServerResult<()> {
+        let current_id = self.next_transport_id;
         match self
             .server_events_sender
-            .send_new_transport(transport.clone())
+            .send_new_transport(current_id, transport.clone())
         {
             Ok(_) => {
-                let current_id = self.next_transport_id;
                 self.transports.insert(current_id, transport);
                 self.next_transport_id += 1;
                 Ok(())
@@ -221,10 +227,7 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                                 Err(e) => error!("Failed to handle message: {:?}", e),
                             }
                         }
-                        TransportEvent::Close => {
-                            error!("Transport closed");
-                            continue;
-                        }
+                        _ => continue,
                     },
                     TransportNotification::NewErrorMessage((_, error)) => {
                         // TODO: Send error?
@@ -236,6 +239,10 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                             error!("Error on attaching transport to the server in order to receive message from it: {error:?}");
                             continue;
                         }
+                    }
+                    TransportNotification::CloseTransport(id) => {
+                        self.transports.remove(&id);
+                        println!("currrent transports: {}", self.transports.len());
                     }
                 },
                 None => {
@@ -254,13 +261,19 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
         tokio::spawn(async move {
             while let Some(event) = events_receiver.recv().await {
                 match event {
-                    ServerEvents::NewTransport(transport) => {
+                    ServerEvents::NewTransport(id, transport) => {
                         let tx_cloned = transports_notifier.clone();
                         tokio::spawn(async move {
                             loop {
                                 match transport.receive().await {
                                     Ok(event) => {
                                         if matches!(event, TransportEvent::Close) {
+                                            if tx_cloned
+                                                .send(TransportNotification::CloseTransport(id))
+                                                .is_err()
+                                            {
+                                                error!("Erron while sending close notification for a transport")
+                                            }
                                             break;
                                         }
                                         match tx_cloned.send(TransportNotification::NewMessage((
