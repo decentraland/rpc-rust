@@ -30,7 +30,7 @@ pub struct WebSocketServer {
     address: String,
 }
 
-/// Sender half of a channel to notify the receiver that there is a new connection
+/// Receiver half of a channel to get notified that there is a new connection
 ///
 /// And then attach turn the connection into a transport and attach it to the `RpcServer`
 ///
