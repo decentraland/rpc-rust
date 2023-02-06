@@ -177,9 +177,9 @@ async fn run_memory_transport() {
 }
 
 async fn run_ws_tramsport() {
-    let (ws_server, mut connection_listener) = WebSocketServer::new("127.0.0.1:8080");
+    let ws_server = WebSocketServer::new("127.0.0.1:8080");
 
-    ws_server.listen().await.unwrap();
+    let mut connection_listener = ws_server.listen().await.unwrap();
 
     let cancellation_token = CancellationToken::new();
     // Another client to test multiple transports server feature

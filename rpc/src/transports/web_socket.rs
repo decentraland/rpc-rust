@@ -11,7 +11,7 @@ use log::{debug, error};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::{
-        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+        mpsc::{unbounded_channel, UnboundedReceiver},
         Mutex,
     },
 };
@@ -28,33 +28,30 @@ type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 pub struct WebSocketServer {
     /// Address to listen for new connection
     address: String,
-    /// Sender half of a channel to notify the receiver that there is a new connection
-    ///
-    /// And then attach turn the connection into a transport and attach it to the `RpcServer`
-    ///
-    on_connection_listener: UnboundedSender<Result<Socket, TransportError>>,
 }
+
+/// Sender half of a channel to notify the receiver that there is a new connection
+///
+/// And then attach turn the connection into a transport and attach it to the `RpcServer`
+///
+type OnConnectionListener = UnboundedReceiver<Result<Socket, TransportError>>;
 
 impl WebSocketServer {
     /// Set the configuration and the minimum for a new WebSocket Server
-    pub fn new(address: &str) -> (Self, UnboundedReceiver<Result<Socket, TransportError>>) {
-        let (tx_on_connection_listener, rx_on_connection_listener) = unbounded_channel();
-        (
-            Self {
-                address: address.to_string(),
-                on_connection_listener: tx_on_connection_listener,
-            },
-            rx_on_connection_listener,
-        )
+    pub fn new(address: &str) -> Self {
+        Self {
+            address: address.to_string(),
+        }
     }
 
     /// Listen for new connection on the address given in a background task and send the new connection through the listener in order to handle it.
-    pub async fn listen(&self) -> Result<(), TransportError> {
+    pub async fn listen(&self) -> Result<OnConnectionListener, TransportError> {
         // listen to given address
         let listener = TcpListener::bind(&self.address).await?;
         debug!("Listening on: {}", self.address);
 
-        let tx_on_connection_listener = self.on_connection_listener.clone();
+        let (tx_on_connection_listener, rx_on_connection_listener) = unbounded_channel();
+
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
@@ -101,7 +98,7 @@ impl WebSocketServer {
             }
         });
 
-        Ok(())
+        Ok(rx_on_connection_listener)
     }
 }
 
