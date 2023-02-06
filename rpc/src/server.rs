@@ -242,7 +242,6 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
                     }
                     TransportNotification::CloseTransport(id) => {
                         self.transports.remove(&id);
-                        println!("currrent transports: {}", self.transports.len());
                     }
                 },
                 None => {
