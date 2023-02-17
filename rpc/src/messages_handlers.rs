@@ -24,14 +24,22 @@ use crate::{
         Response, RpcMessageTypes, StreamMessage,
     },
     server::{ServerError, ServerResult},
+    service_module_definition::{
+        BiStreamsResponse, ClientStreamsResponse, ServerStreamsResponse, UnaryResponse,
+    },
     stream_protocol::Generator,
     transports::{Transport, TransportEvent},
-    types::{BiStreamsResponse, ClientStreamsResponse, ServerStreamsResponse, UnaryResponse},
 };
 
+/// It's in charge of handling every request that the client sends
+///
+/// It spawns a background tasks to process every request
+///
 #[derive(Default)]
 pub struct ServerMessagesHandler {
+    /// Handler for server and client streams procedures
     pub streams_handler: Arc<StreamsHandler>,
+    /// Stores listeners for client streams messages
     listeners: Mutex<HashMap<u32, AsyncChannelSender<StreamPackage>>>,
 }
 
@@ -43,14 +51,14 @@ impl ServerMessagesHandler {
         }
     }
 
-    /// Receive a procedure handler future and process it in another task.
+    /// Receive a unary procedure handler returned future and process it in a spawned background task.
     ///
-    /// This function aims to run the procedure handler in another task to achieve processing requests concurrently.
+    /// This function aims to run the procedure handler in spawned task to achieve processing requests concurrently.
     /// # Arguments
     ///
     /// * `transport` - Cloned transport from `RpcServer`
     /// * `message_identifier` - Message id to be sent in the response
-    /// * `request_handler` - Procedure handler future to be executed
+    /// * `procedure_handler` - Procedure handler returned future to be executed (awaited)
     pub fn process_unary_request(
         &self,
         transport: Arc<dyn Transport + Send + Sync>,
@@ -71,6 +79,15 @@ impl ServerMessagesHandler {
         });
     }
 
+    /// Receive a server streams procedure handler returned future and process it in a spawned background task.
+    ///
+    /// This function aims to run the procedure handler in spawned task to achieve processing requests concurrently.
+    /// # Arguments
+    ///
+    /// * `self: Arc<Self>` - an Arc<Self> that it's a cloned instance that the [`crate::server::RpcServer`] contains. It spawns a background task and it needs to modify its state
+    /// * `transport` - Cloned transport from `RpcServer`
+    /// * `message_identifier` - Message id to be sent in the response
+    /// * `procedure_handler` - Procedure handler returned future to be executed (awaited)
     pub fn process_server_streams_request(
         self: Arc<Self>,
         transport: Arc<dyn Transport + Send + Sync>,

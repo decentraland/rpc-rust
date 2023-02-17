@@ -11,13 +11,12 @@ use crate::{
         CreatePort, CreatePortResponse, DestroyPort, ModuleProcedure, Request, RequestModule,
         RequestModuleResponse, RpcMessageTypes,
     },
+    service_module_definition::{
+        BiStreamsRequestHandler, ClientStreamsRequestHandler, Definition,
+        ServerStreamsRequestHandler, ServiceModuleDefinition, UnaryRequestHandler,
+    },
     stream_protocol::StreamProtocol,
     transports::{Transport, TransportError, TransportEvent},
-    types::{
-        BiStreamsRequestHandler, ClientStreamsRequestHandler, Definition, ServerModuleDeclaration,
-        ServerModuleProcedures, ServerStreamsRequestHandler, ServiceModuleDefinition,
-        UnaryRequestHandler,
-    },
 };
 
 /// Handler that runs each time that a port is created
@@ -693,7 +692,7 @@ impl<Context> RpcServerPort<Context> {
                         };
                         server_module_declaration
                             .procedures
-                            .push(ServerModuleProcedures {
+                            .push(ServerModuleProcedure {
                                 procedure_name: procedure_name.clone(),
                                 procedure_id: current_id,
                             });
@@ -733,4 +732,16 @@ impl<Context> RpcServerPort<Context> {
             _ => Err(ServerError::ProcedureError),
         }
     }
+}
+
+#[derive(Debug)]
+pub struct ServerModuleProcedure {
+    pub procedure_name: String,
+    pub procedure_id: u32,
+}
+
+/// Used to store all the procedures in the `loaded_modules` fields inside [`RpcServerPort`]
+pub struct ServerModuleDeclaration {
+    /// Array with all the module's (service) procedures
+    pub procedures: Vec<ServerModuleProcedure>,
 }

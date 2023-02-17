@@ -10,7 +10,7 @@ pub enum TransportEvent {
     ///
     /// The connect event is emited when the transport gets connected.
     ///
-    /// The RpcServer is in charge to send the notification (bytes[1]\{0x0\})
+    /// The RpcServer is in charge to send the notification
     /// to signal the client transport that it is connected.
     ///
     Connect,

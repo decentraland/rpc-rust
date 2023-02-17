@@ -2,7 +2,10 @@
 use std::sync::Arc;
 
 use prost::Message;
-use rpc_rust::{server::RpcServerPort, stream_protocol::Generator, types::ServiceModuleDefinition};
+use rpc_rust::{
+    server::RpcServerPort, service_module_definition::ServiceModuleDefinition,
+    stream_protocol::Generator,
+};
 
 use crate::{Book, GetBookRequest, QueryBooksRequest};
 

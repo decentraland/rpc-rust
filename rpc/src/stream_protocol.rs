@@ -18,14 +18,28 @@ use crate::{
     CommonError,
 };
 
+/// Used to handle all the stream messages for client streams, server streams and bidirectional streams
 pub struct StreamProtocol {
+    /// the ID of Port
     port_id: u32,
+    /// ID of the message that inited the streaming
     message_number: u32,
+    /// The last sequence id received in a [`StreamMessage`]
     last_received_sequence_id: u32,
+    /// Flag to know if the remote half is closed or closed the stream
     is_remote_closed: bool,
+    /// Flag to know if the remote half was open in the last message
     was_open: bool,
+    /// Generator field in charge of both half of a generator
+    ///
+    /// [`Generator`] in charge of waiting for the next stream message
+    ///
+    /// [`GeneratorYielder`] in charge of sending the next stream message to the [`Generator`]
+    ///
     pub generator: (Generator<Vec<u8>>, GeneratorYielder<Vec<u8>>),
+    /// The transport used for the communications
     transport: Arc<dyn Transport + Send + Sync>,
+    /// Cancellation token to cancel the background task listening for new messages
     process_cancellation_token: CancellationToken,
 }
 
