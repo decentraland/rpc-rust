@@ -10,6 +10,8 @@ jobs:
     steps:
       - uses: actions/checkout@v1
       - run: rustup component add clippy
+      - name: Install Protobuf
+        run: brew install protobuf
       - uses: Swatinem/rust-cache@v1.3.0
       - uses: actions-rs/clippy-check@v1
         with:
