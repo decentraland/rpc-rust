@@ -1,16 +1,6 @@
 use std::{env, time::Duration};
 
-use integration::{
-    codegen::{
-        client::{BookServiceClient, BookServiceClientInterface},
-        server::BookServiceCodeGen,
-    },
-    service::book_service,
-    setup_quic::{configure_client, generate_self_signed_cert},
-    Book, GetBookRequest, MyExampleContext, QueryBooksRequest,
-};
-use quinn::ServerConfig;
-use rpc_rust::{
+use dcl_rpc::{
     client::RpcClient,
     server::{RpcServer, RpcServerPort},
     stream_protocol::Generator,
@@ -22,6 +12,16 @@ use rpc_rust::{
         Transport,
     },
 };
+use integration::{
+    codegen::{
+        client::{BookServiceClient, BookServiceClientInterface},
+        server::BookServiceCodeGen,
+    },
+    service::book_service,
+    setup_quic::{configure_client, generate_self_signed_cert},
+    Book, GetBookRequest, MyExampleContext, QueryBooksRequest,
+};
+use quinn::ServerConfig;
 use tokio::{join, select, time::sleep};
 use tokio_util::sync::CancellationToken;
 
@@ -352,7 +352,7 @@ async fn handle_client_connection<T: Transport + Send + Sync + 'static>(
             sleep(Duration::from_millis(300)).await;
             println!("> Client Stream > GetBookStream > Sending stream payload");
             generator_yielder
-                .insert(GetBookRequest { isbn: 1000 })
+                .r#yield(GetBookRequest { isbn: 1000 })
                 .await
                 .unwrap();
         }
@@ -368,7 +368,7 @@ async fn handle_client_connection<T: Transport + Send + Sync + 'static>(
             sleep(Duration::from_millis(300)).await;
             println!("> BiDir Stream > QueryBooksStream > Sending stream payload");
             generator_yielder
-                .insert(GetBookRequest { isbn: (1000 + i) })
+                .r#yield(GetBookRequest { isbn: (1000 + i) })
                 .await
                 .unwrap();
         }

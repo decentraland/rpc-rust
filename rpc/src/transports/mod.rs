@@ -10,7 +10,7 @@ pub enum TransportEvent {
     ///
     /// The connect event is emited when the transport gets connected.
     ///
-    /// The RpcServer is in charge to send the notification (bytes[1]\{0x0\})
+    /// The RpcServer is in charge to send the notification
     /// to signal the client transport that it is connected.
     ///
     Connect,
@@ -25,6 +25,10 @@ pub enum TransportEvent {
 #[derive(Debug)]
 pub enum TransportError {
     Connection,
+    /// Error while the underlying transport is running.
+    ///
+    /// For example: A peer reset the connection in a websocket connection
+    ///
     Internal,
 }
 

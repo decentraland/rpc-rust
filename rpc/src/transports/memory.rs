@@ -5,9 +5,27 @@ use async_trait::async_trait;
 
 use super::{Transport, TransportError, TransportEvent};
 
+/// MemoryTransport usually has no a use case in a real project (maybe if it's compiled to WASM and used in the browser).
+///
+/// The most common use case is for testing. It uses [`async_channel`] internally
+///
 pub struct MemoryTransport {
+    /// Flag to know if it's already connected to the othe half.
+    ///
+    /// It uses an [`AtomicBool`] to meet the requirements of the [`Transport`] trait
+    ///
     connected: AtomicBool,
+    /// The sender half of an [`async_channel::bounded`] channel
+    ///
+    /// It uses an [`async_channel`] to meet the requirements of the [`Transport`] trait
+    ///
+    /// eg: [`crate::client::RpcClient`] stores the sender half of the channel which the [`crate::server::RpcServer`] stores the receiver half and viceversa
     sender: Sender<Vec<u8>>,
+    /// The receiver half of an [`async_channel::bounded`] channel
+    ///
+    /// It uses an [`async_channel`] to meet the requirements of the [`Transport`] trait
+    ///
+    /// eg: [`crate::client::RpcClient`] stores the receiver half of the channel which the [`crate::server::RpcServer`] stores the sender half and viceversa
     receiver: Receiver<Vec<u8>>,
 }
 
@@ -20,6 +38,7 @@ impl MemoryTransport {
         }
     }
 
+    /// It crates two [`MemoryTransport`]s for the both ends
     pub fn create() -> (Self, Self) {
         let (client_sender, server_receiver) = bounded::<Vec<u8>>(32);
         let (server_sender, client_receiver) = bounded::<Vec<u8>>(32);

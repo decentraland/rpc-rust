@@ -1,4 +1,4 @@
-use rpc_rust::stream_protocol::Generator;
+use dcl_rpc::stream_protocol::Generator;
 
 pub mod server;
 

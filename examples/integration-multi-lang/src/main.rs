@@ -1,9 +1,9 @@
-use integration_multi_lang::{
-    codegen::server::BookServiceCodeGen, service::book_service, Book, MyExampleContext,
-};
-use rpc_rust::{
+use dcl_rpc::{
     server::{RpcServer, RpcServerPort},
     transports::web_socket::{WebSocketServer, WebSocketTransport},
+};
+use integration_multi_lang::{
+    codegen::server::BookServiceCodeGen, service::book_service, Book, MyExampleContext,
 };
 
 fn create_db() -> Vec<Book> {

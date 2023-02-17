@@ -6,28 +6,34 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 use crate::{
     messages_handlers::ServerMessagesHandler,
-    protocol::{
+    rpc_protocol::{
         parse::{build_message_identifier, parse_header},
         CreatePort, CreatePortResponse, DestroyPort, ModuleProcedure, Request, RequestModule,
         RequestModuleResponse, RpcMessageTypes,
     },
+    service_module_definition::{
+        BiStreamsRequestHandler, ClientStreamsRequestHandler, Definition,
+        ServerStreamsRequestHandler, ServiceModuleDefinition, UnaryRequestHandler,
+    },
     stream_protocol::StreamProtocol,
     transports::{Transport, TransportError, TransportEvent},
-    types::{
-        BiStreamsRequestHandler, ClientStreamsRequestHandler, Definition, ServerModuleDeclaration,
-        ServerModuleProcedures, ServerStreamsRequestHandler, ServiceModuleDefinition,
-        UnaryRequestHandler,
-    },
 };
 
+/// Handler that runs each time that a port is created
 type PortHandlerFn<Context> = dyn Fn(&mut RpcServerPort<Context>) + Send + Sync + 'static;
 
+/// Result type for all `RpcServer` functions
 pub type ServerResult<T> = Result<T, ServerError>;
 
+/// Server Procedure types
 enum Procedure<Context> {
+    /// Unary Procedure. Basic request<>response
     Unary(Arc<UnaryRequestHandler<Context>>),
+    /// Server Streams Procedure. `RpcClient` sends a request and waits for the `RpcServer` to send all the data that it has and close the stream opened
     ServerStreams(Arc<ServerStreamsRequestHandler<Context>>),
+    /// Client Streams Procedure. `RpcClient` sends a request and opens a stream in the `RpcServer`, then `RpcServer` waits for `RpcClient` to send all the payloads
     ClientStreams(Arc<ClientStreamsRequestHandler<Context>>),
+    /// BiDirectional Streams Procedure. A stream is opened on both sides (client and server)
     BiStreams(Arc<BiStreamsRequestHandler<Context>>),
 }
 
@@ -197,7 +203,7 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
         }
     }
 
-    /// Start listening messages from the attached transport
+    /// Start processing `ServerEvent` events and listening on a channel for new `TransportNotification` that are sent by all the attached transports that are running in background tasks.
     pub async fn run(&mut self) {
         // create transports notifier. This channel will be in charge of sending all messages (and errors) that all the transports attached to server receieve
         // We use async_channel crate for this channel because we want our receiver to be cloned so that we can close it when no more transports are open
@@ -252,6 +258,15 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
         }
     }
 
+    /// Process `ServerEvent` that are sent through the events channel.
+    ///
+    /// It spawns a background task to listen on the channel for new events and executes different actions depending on the event.
+    ///
+    /// # Events
+    /// - `ServerEvent::NewTransport` : Spawns a background task to listen on the transport for new `TransportEvent` and then it sends that new event to the `RpcServer`
+    /// - `ServerEvent::TransportFinished` : Collect in memory the amount of transports that already finished and when the amount is equal to the total running transport, it emits `ServerEvents::Terminated`
+    /// - `ServerEvent::Terminated` : Close the `RpcServer` transports notfier (channel) and events channel
+    ///
     fn process_server_events(
         &mut self,
         transports_notifier: UnboundedSender<TransportNotification>,
@@ -677,7 +692,7 @@ impl<Context> RpcServerPort<Context> {
                         };
                         server_module_declaration
                             .procedures
-                            .push(ServerModuleProcedures {
+                            .push(ServerModuleProcedure {
                                 procedure_name: procedure_name.clone(),
                                 procedure_id: current_id,
                             });
@@ -717,4 +732,16 @@ impl<Context> RpcServerPort<Context> {
             _ => Err(ServerError::ProcedureError),
         }
     }
+}
+
+#[derive(Debug)]
+pub struct ServerModuleProcedure {
+    pub procedure_name: String,
+    pub procedure_id: u32,
+}
+
+/// Used to store all the procedures in the `loaded_modules` fields inside [`RpcServerPort`]
+pub struct ServerModuleDeclaration {
+    /// Array with all the module's (service) procedures
+    pub procedures: Vec<ServerModuleProcedure>,
 }
