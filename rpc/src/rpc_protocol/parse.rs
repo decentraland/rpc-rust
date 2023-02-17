@@ -52,7 +52,7 @@ pub fn parse_protocol_message<R: Message + Default>(data: &[u8]) -> Option<(u32,
 
 #[cfg(test)]
 mod tests {
-    use crate::protocol::*;
+    use crate::rpc_protocol::*;
     use prost::Message;
 
     use super::{build_message_identifier, parse_protocol_message};

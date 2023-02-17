@@ -4,7 +4,7 @@ use crate::{
 };
 use std::{sync::Arc, time::Duration};
 
-use rpc_rust::stream_protocol::Generator;
+use dcl_rpc::stream_protocol::Generator;
 use tokio::time::sleep;
 
 use crate::codegen::server::BookServiceInterface;

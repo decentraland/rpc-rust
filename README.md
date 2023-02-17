@@ -26,3 +26,7 @@ cargo install just
 ## Run the integration example
 
 `just run-integration`
+
+## Run the multi language integration example
+
+`just run-multilang`

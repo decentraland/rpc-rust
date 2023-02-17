@@ -1,4 +1,4 @@
-use rpc_rust::{
+use dcl_rpc::{
     self,
     transports::{memory::MemoryTransport, Transport, TransportEvent},
 };
