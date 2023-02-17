@@ -46,7 +46,7 @@ impl BookServiceInterface<MyExampleContext> for BookService {
             for book in &ctx.hardcoded_database {
                 sleep(Duration::from_secs(1)).await;
                 if book.author.contains(&request.author_prefix) {
-                    generator_yielder.insert(book.clone()).await.unwrap();
+                    generator_yielder.r#yield(book.clone()).await.unwrap();
                 }
             }
         });
@@ -80,7 +80,7 @@ impl BookServiceInterface<MyExampleContext> for BookService {
                     .find(|book| book.isbn == message.isbn);
                 if let Some(book) = book {
                     sleep(Duration::from_millis(500)).await; // Simulating DB
-                    generator_yielder.insert(book.clone()).await.unwrap()
+                    generator_yielder.r#yield(book.clone()).await.unwrap()
                 }
             }
         });

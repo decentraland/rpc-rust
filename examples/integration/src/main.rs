@@ -352,7 +352,7 @@ async fn handle_client_connection<T: Transport + Send + Sync + 'static>(
             sleep(Duration::from_millis(300)).await;
             println!("> Client Stream > GetBookStream > Sending stream payload");
             generator_yielder
-                .insert(GetBookRequest { isbn: 1000 })
+                .r#yield(GetBookRequest { isbn: 1000 })
                 .await
                 .unwrap();
         }
@@ -368,7 +368,7 @@ async fn handle_client_connection<T: Transport + Send + Sync + 'static>(
             sleep(Duration::from_millis(300)).await;
             println!("> BiDir Stream > QueryBooksStream > Sending stream payload");
             generator_yielder
-                .insert(GetBookRequest { isbn: (1000 + i) })
+                .r#yield(GetBookRequest { isbn: (1000 + i) })
                 .await
                 .unwrap();
         }

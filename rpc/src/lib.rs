@@ -6,6 +6,7 @@ pub mod service_module_definition;
 pub mod stream_protocol;
 pub mod transports;
 
+#[derive(Debug)]
 pub enum CommonError {
     ProtocolError,
     TransportError,

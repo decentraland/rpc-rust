@@ -29,6 +29,7 @@ use crate::{
     },
     stream_protocol::Generator,
     transports::{Transport, TransportEvent},
+    CommonError,
 };
 
 /// It's in charge of handling every request that the client sends
@@ -37,7 +38,7 @@ use crate::{
 ///
 #[derive(Default)]
 pub struct ServerMessagesHandler {
-    /// Handler for server and client streams procedures
+    /// Data structure in charge of handling all messages related to streams
     pub streams_handler: Arc<StreamsHandler>,
     /// Stores listeners for client streams messages
     listeners: Mutex<HashMap<u32, AsyncChannelSender<StreamPackage>>>,
@@ -279,7 +280,10 @@ impl ClientMessagesHandler {
         }
     }
 
-    /// Starts a background task for listening responses in the transport coping (Arc) an existing instance
+    /// Starts a background task to listen responses from the [`crate::server::RpcServer`] sent to the transport.
+    ///
+    /// The receiver is an [`Arc<Self>`] in order to be able to process in a backgroun taks and mutate the state of the listeners
+    ///
     pub fn start(self: Arc<Self>) {
         let token = self.process_cancellation_token.clone();
         tokio::spawn(async move {
@@ -365,6 +369,12 @@ impl ClientMessagesHandler {
         }
     }
 
+    /// It spawns a background task to wait for the server to acknowledge the open of client streams or biderectional streams.
+    ///
+    ///  After the server acknowledges the open, it starts sending stram messages.
+    ///
+    /// The receiver of the function is an [`Arc<Self>`] because an instance should be cloned for the background task and mutate the state of the message listeners
+    ///
     pub fn await_server_ack_open_and_send_streams<M: Message + 'static>(
         self: Arc<Self>,
         open_promise: OneShotReceiver<Vec<u8>>,
@@ -391,6 +401,7 @@ impl ClientMessagesHandler {
         });
     }
 
+    /// Registers a one time listener. It will be used only one time and then removed.
     pub async fn register_one_time_listener(
         &self,
         message_id: u32,
@@ -400,6 +411,7 @@ impl ClientMessagesHandler {
         lock.insert(message_id, callback);
     }
 
+    /// Registers a listener which will be more than one time
     pub async fn register_listener(
         &self,
         message_id: u32,
@@ -409,12 +421,14 @@ impl ClientMessagesHandler {
         lock.insert(message_id, callback);
     }
 
+    /// Unregister a listener
     pub async fn unregister_listener(&self, message_id: u32) {
         let mut lock = self.listeners.lock().await;
         lock.remove(&message_id);
     }
 }
 
+/// In charge of handling the acknowledge listener for Stream Messages so that it knows that it has to send the next [`StreamMessage`]
 #[derive(Default)]
 pub struct StreamsHandler {
     ack_listeners: Mutex<HashMap<String, OneShotSender<Vec<u8>>>>,
@@ -427,13 +441,14 @@ impl StreamsHandler {
         }
     }
 
+    /// It sends a message through the given `transport` in the parameter to close an opened stream procedure
     async fn close_stream(
         &self,
         transport: Arc<dyn Transport + Send + Sync>,
         sequence_id: u32,
         message_identifier: u32,
         port_id: u32,
-    ) -> ServerResult<()> {
+    ) -> Result<(), CommonError> {
         let close_message = StreamMessage {
             closed: true,
             ack: false,
@@ -446,21 +461,30 @@ impl StreamsHandler {
             payload: vec![],
         };
 
-        transport.send(close_message.encode_to_vec()).await.unwrap();
+        transport
+            .send(close_message.encode_to_vec())
+            .await
+            .map_err(|_| CommonError::TransportError)?;
 
         Ok(())
     }
 
+    /// As it receives encoded messages from the `stream_generator`, it'll be sending [`StreamMessage`]s through the given transport in the parameters.
+    ///
+    /// It handles the sequence id for each [`StreamMessage`], it'll await for the acknowlegde of each message in the other half to conitnue with the messages sending.
+    ///
+    /// Also, it stops the generator and break the loop if the other half closed the stream. Otherwise, it will close the strram when the `stream_generator` doesn't have more messages.
+    ///
     pub async fn send_stream_through_transport(
         &self,
         transport: Arc<dyn Transport + Send + Sync>,
-        mut stream: Generator<Vec<u8>>,
+        mut stream_generator: Generator<Vec<u8>>,
         port_id: u32,
         message_identifier: u32,
-    ) -> ServerResult<()> {
+    ) -> Result<(), CommonError> {
         let mut sequence_number = 0;
-
-        while let Some(message) = stream.next().await {
+        let mut was_closed_by_peer = false;
+        while let Some(message) = stream_generator.next().await {
             sequence_number += 1;
             let current_message = StreamMessage {
                 closed: false,
@@ -487,6 +511,8 @@ impl StreamsHandler {
                     if ack_message.ack {
                         continue;
                     } else if ack_message.closed {
+                        was_closed_by_peer = true;
+                        stream_generator.close();
                         break;
                     }
                 }
@@ -497,13 +523,15 @@ impl StreamsHandler {
             }
         }
 
-        self.close_stream(transport, sequence_number, message_identifier, port_id)
-            .await
-            .unwrap();
+        if !was_closed_by_peer {
+            self.close_stream(transport, sequence_number, message_identifier, port_id)
+                .await?;
+        }
 
         Ok(())
     }
 
+    /// Sends a [`StreamMessage`] through the given transport and registers the created acknowledge listener for the sent message and return it.
     async fn send_stream(
         &self,
         transport: Arc<dyn Transport + Send + Sync>,
@@ -524,6 +552,7 @@ impl StreamsHandler {
         Ok(rx)
     }
 
+    /// Notify the acknowledge listener registered in [`send_stream`](#method.send_stream) that the message was acknowledge by the other peer and it can continue sending the pending messages
     pub fn message_acknowledged_by_peer(
         self: Arc<Self>,
         message_identifier: u32,
