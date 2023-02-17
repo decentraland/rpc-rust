@@ -6,7 +6,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 use crate::{
     messages_handlers::ServerMessagesHandler,
-    protocol::{
+    rpc_protocol::{
         parse::{build_message_identifier, parse_header},
         CreatePort, CreatePortResponse, DestroyPort, ModuleProcedure, Request, RequestModule,
         RequestModuleResponse, RpcMessageTypes,

@@ -13,7 +13,7 @@ use async_channel::{unbounded, Receiver as AsyncChannelReceiver, Sender as Async
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    protocol::{parse::build_message_identifier, RpcMessageTypes, StreamMessage},
+    rpc_protocol::{parse::build_message_identifier, RpcMessageTypes, StreamMessage},
     transports::{Transport, TransportError},
     CommonError,
 };

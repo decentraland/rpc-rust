@@ -16,7 +16,7 @@ use async_channel::Sender as AsyncChannelSender;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    protocol::{
+    rpc_protocol::{
         parse::{
             build_message_identifier, parse_header, parse_message_identifier,
             parse_protocol_message,
@@ -55,11 +55,6 @@ impl ServerMessagesHandler {
     /// Receive a unary procedure handler returned future and process it in a spawned background task.
     ///
     /// This function aims to run the procedure handler in spawned task to achieve processing requests concurrently.
-    /// # Arguments
-    ///
-    /// * `transport` - Cloned transport from `RpcServer`
-    /// * `message_identifier` - Message id to be sent in the response
-    /// * `procedure_handler` - Procedure handler returned future to be executed (awaited)
     pub fn process_unary_request(
         &self,
         transport: Arc<dyn Transport + Send + Sync>,
@@ -83,12 +78,6 @@ impl ServerMessagesHandler {
     /// Receive a server streams procedure handler returned future and process it in a spawned background task.
     ///
     /// This function aims to run the procedure handler in spawned task to achieve processing requests concurrently.
-    /// # Arguments
-    ///
-    /// * `self: Arc<Self>` - an Arc<Self> that it's a cloned instance that the [`crate::server::RpcServer`] contains. It spawns a background task and it needs to modify its state
-    /// * `transport` - Cloned transport from `RpcServer`
-    /// * `message_identifier` - Message id to be sent in the response
-    /// * `procedure_handler` - Procedure handler returned future to be executed (awaited)
     pub fn process_server_streams_request(
         self: Arc<Self>,
         transport: Arc<dyn Transport + Send + Sync>,
@@ -113,6 +102,9 @@ impl ServerMessagesHandler {
         });
     }
 
+    /// Receive a client streams procedure handler returned future and process it in a spawned background task.
+    ///
+    /// This function aims to run the procedure handler in spawned task to achieve processing requests concurrently.
     pub fn process_client_streams_request(
         self: Arc<Self>,
         transport: Arc<dyn Transport + Send + Sync>,
@@ -129,6 +121,9 @@ impl ServerMessagesHandler {
         });
     }
 
+    /// Receive a bidirectional streams procedure handler returned future and process it in a spawned background task.
+    ///
+    /// This function aims to run the procedure handler in spawned task to achieve processing requests concurrently.
     pub fn process_bidir_streams_request(
         self: Arc<Self>,
         transport: Arc<dyn Transport + Send + Sync>,
@@ -156,6 +151,9 @@ impl ServerMessagesHandler {
         });
     }
 
+    /// Notify the listener for a client streams procedure that the client sent a new [`StreamMessage`]
+    ///
+    /// This function aims to run the procedure handler in spawned task to achieve processing requests concurrently.
     pub fn notify_new_client_stream(self: Arc<Self>, message_identifier: u32, payload: Vec<u8>) {
         tokio::spawn(async move {
             let lock = self.listeners.lock().await;
@@ -173,6 +171,7 @@ impl ServerMessagesHandler {
         });
     }
 
+    /// Sends a common response [`Response`] through the given transport
     pub async fn send_response(
         &self,
         transport: Arc<dyn Transport + Send + Sync>,
@@ -190,6 +189,7 @@ impl ServerMessagesHandler {
         transport.send(response.encode_to_vec()).await.unwrap();
     }
 
+    /// Sends a [`StreamMessage`] in order to open the stream on the other half
     async fn open_server_stream(
         &self,
         transport: Arc<dyn Transport + Send + Sync>,
@@ -213,6 +213,7 @@ impl ServerMessagesHandler {
             .await
     }
 
+    /// Register a listener for a specific message_id used for client and bidirectional streams
     pub async fn register_listener(
         &self,
         message_id: u32,
@@ -222,6 +223,7 @@ impl ServerMessagesHandler {
         lock.insert(message_id, callback);
     }
 
+    /// Unregister a listener for a specific message_id used for client and bidirectional streams
     pub async fn unregister_listener(&self, message_id: u32) {
         let mut lock = self.listeners.lock().await;
         lock.remove(&message_id);

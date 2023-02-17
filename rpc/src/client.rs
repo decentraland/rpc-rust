@@ -6,7 +6,7 @@ use tokio::sync::{oneshot, Mutex};
 
 use crate::{
     messages_handlers::ClientMessagesHandler,
-    protocol::{
+    rpc_protocol::{
         parse::{build_message_identifier, parse_protocol_message},
         CreatePort, CreatePortResponse, Request, RequestModule, RequestModuleResponse, Response,
         RpcMessageTypes,
