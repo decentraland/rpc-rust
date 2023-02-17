@@ -1,5 +1,5 @@
 // THIS CODE SHOULD BE AUTO-GENERATED
-use rpc_rust::client::{RpcClientModule, ServiceClient};
+use dcl_rpc::client::{RpcClientModule, ServiceClient};
 
 use crate::{Book, GetBookRequest, QueryBooksRequest};
 

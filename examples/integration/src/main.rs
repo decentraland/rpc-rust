@@ -1,16 +1,6 @@
 use std::{env, time::Duration};
 
-use integration::{
-    codegen::{
-        client::{BookServiceClient, BookServiceClientInterface},
-        server::BookServiceCodeGen,
-    },
-    service::book_service,
-    setup_quic::{configure_client, generate_self_signed_cert},
-    Book, GetBookRequest, MyExampleContext, QueryBooksRequest,
-};
-use quinn::ServerConfig;
-use rpc_rust::{
+use dcl_rpc::{
     client::RpcClient,
     server::{RpcServer, RpcServerPort},
     stream_protocol::Generator,
@@ -22,6 +12,16 @@ use rpc_rust::{
         Transport,
     },
 };
+use integration::{
+    codegen::{
+        client::{BookServiceClient, BookServiceClientInterface},
+        server::BookServiceCodeGen,
+    },
+    service::book_service,
+    setup_quic::{configure_client, generate_self_signed_cert},
+    Book, GetBookRequest, MyExampleContext, QueryBooksRequest,
+};
+use quinn::ServerConfig;
 use tokio::{join, select, time::sleep};
 use tokio_util::sync::CancellationToken;
 

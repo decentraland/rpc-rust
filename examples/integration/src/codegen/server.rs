@@ -1,11 +1,11 @@
 // THIS CODE SHOULD BE AUTO-GENERATED
 use std::sync::Arc;
 
-use prost::Message;
-use rpc_rust::{
+use dcl_rpc::{
     server::RpcServerPort, service_module_definition::ServiceModuleDefinition,
     stream_protocol::Generator,
 };
+use prost::Message;
 
 use crate::{Book, GetBookRequest, QueryBooksRequest};
 
