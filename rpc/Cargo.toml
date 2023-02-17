@@ -3,7 +3,6 @@ name = "dcl-rpc"
 version = "0.1.0"
 edition = "2021"
 description = "Decentraland RPC Implementation"
-readme = "README.md"
 repository = "https://github.com/decentraland/rpc-rust"
 documentation = "https://docs.rs/dcl-rpc"
 keywords = ["rpc", "decentraland", "protobuffer"]
