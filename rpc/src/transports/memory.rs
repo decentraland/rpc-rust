@@ -6,7 +6,6 @@ use async_trait::async_trait;
 use super::{Transport, TransportError, TransportEvent};
 
 pub struct MemoryTransport {
-    id: Option<u32>,
     connected: AtomicBool,
     sender: Sender<Vec<u8>>,
     receiver: Receiver<Vec<u8>>,
@@ -15,7 +14,6 @@ pub struct MemoryTransport {
 impl MemoryTransport {
     fn new(sender: Sender<Vec<u8>>, receiver: Receiver<Vec<u8>>) -> Self {
         Self {
-            id: None,
             sender,
             receiver,
             connected: AtomicBool::new(false),
@@ -65,13 +63,5 @@ impl Transport for MemoryTransport {
 
     fn is_connected(&self) -> bool {
         self.connected.load(Ordering::Relaxed)
-    }
-
-    fn set_id(&mut self, id: u32) {
-        self.id.replace(id);
-    }
-
-    fn get_id(&self) -> u32 {
-        self.id.unwrap()
     }
 }

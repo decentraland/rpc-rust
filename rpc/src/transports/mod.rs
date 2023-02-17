@@ -41,8 +41,5 @@ pub trait Transport {
         }
     }
 
-    fn set_id(&mut self, id: u32);
-    fn get_id(&self) -> u32;
-
     fn is_connected(&self) -> bool;
 }

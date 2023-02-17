@@ -5,11 +5,11 @@ import { WebSocket } from 'ws';
 import { Book, BookServiceDefinition, GetBookRequest } from "./api";
 import expect from "expect";
 
-console.log("> Creating client and server WebSocket")
+console.log("> Creating WebSocket client")
 let ws = new WebSocket('ws://127.0.0.1:8080');
 const clientSocket = WebSocketTransport(ws)
 
-console.log("> Creating client")
+console.log("> Creating RPC client")
 const clientPromise = createRpcClient(clientSocket)
 
 async function* bookRequestGenerator() {

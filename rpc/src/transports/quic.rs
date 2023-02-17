@@ -11,7 +11,6 @@ use tokio::sync::Mutex;
 use super::{Transport, TransportError, TransportEvent};
 
 pub struct QuicTransport {
-    id: Option<u32>,
     send: Mutex<SendStream>,
     receiver: Mutex<RecvStream>,
     ready: AtomicBool,
@@ -20,7 +19,6 @@ pub struct QuicTransport {
 impl QuicTransport {
     fn new((send, receiver): (SendStream, RecvStream)) -> Self {
         Self {
-            id: None,
             send: Mutex::new(send),
             receiver: Mutex::new(receiver),
             ready: AtomicBool::new(false),
@@ -110,13 +108,5 @@ impl Transport for QuicTransport {
 
     fn is_connected(&self) -> bool {
         self.ready.load(Ordering::Relaxed)
-    }
-
-    fn set_id(&mut self, id: u32) {
-        self.id.replace(id);
-    }
-
-    fn get_id(&self) -> u32 {
-        self.id.unwrap()
     }
 }

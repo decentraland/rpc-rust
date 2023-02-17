@@ -52,7 +52,6 @@ impl BookServiceCodeGen {
                 let response = service
                     .get_book(GetBookRequest::decode(request.as_slice()).unwrap(), context)
                     .await;
-                println!("> Service Definition > Get Book > response: {:?}", response);
                 response.encode_to_vec()
             })
         });
