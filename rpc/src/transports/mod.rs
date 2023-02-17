@@ -25,6 +25,10 @@ pub enum TransportEvent {
 #[derive(Debug)]
 pub enum TransportError {
     Connection,
+    /// Error while the underlying transport is running.
+    ///
+    /// For example: A peer reset the connection in a websocket connection
+    ///
     Internal,
 }
 

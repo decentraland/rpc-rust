@@ -17,14 +17,20 @@ use tokio::{
 };
 use tokio_tungstenite::connect_async;
 
+/// Write Stream Half of [`WebSocketStream`]
 type WriteStream =
     SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, tokio_tungstenite::tungstenite::Message>;
 
+/// Read Stream Half of [`WebSocketStream`]
 type ReadStream = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 
+/// A [`WebSocketStream`] from a WebSocket connection
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-/// WebSocketServer to receive connections
+/// WebSocketServer using [`tokio_tungstenite`] to receive connections
+///
+/// You can use another websocket server as long as it meets the interface requirements
+///
 pub struct WebSocketServer {
     /// Address to listen for new connection
     address: String,
@@ -44,7 +50,10 @@ impl WebSocketServer {
         }
     }
 
-    /// Listen for new connection on the address given in a background task and send the new connection through the listener in order to handle it.
+    /// Listen for new connections on the address given and do the websocket handshake in a background task
+    ///
+    /// Each new connection will be sent through the [`OnConnectionListener`], in order to be attached to the [`crate::server::RpcServer`] as a [`WebSocketTransport`]
+    ///
     pub async fn listen(&self) -> Result<OnConnectionListener, TransportError> {
         // listen to given address
         let listener = TcpListener::bind(&self.address).await?;
@@ -106,7 +115,10 @@ impl WebSocketServer {
 pub struct WebSocketClient;
 
 impl WebSocketClient {
-    /// Connect to a websocket server
+    /// Connect to a websocket server and returns a [`WebSocketStream`] if all went OK or a [`TransportError`] if there was a error on establishing the connection
+    ///
+    /// If all went OK, and the [`WebSocketStream`] is returned, it should be turned into a [`WebSocketTransport`] to be attached to the [`crate::client::RpcClient`]
+    ///
     pub async fn connect(
         host: &str,
     ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, TransportError> {
@@ -117,8 +129,20 @@ impl WebSocketClient {
 }
 
 pub struct WebSocketTransport {
+    /// The read stream half of the [`WebSocketStream`]
+    ///
+    /// It's inside a [`Mutex`] in order to meet the requirements of the [`Transport`] trait that doesn't have mutable methods so we should do _Interior Mutability_
+    ///
     read: Mutex<ReadStream>,
+    /// The write stream half of the [`WebSocketStream`]
+    ///
+    /// It's inside a [`Mutex`] in order to meet the requirements of the [`Transport`] trait that doesn't have mutable methods so we should do _Interior Mutability_
+    ///
     write: Mutex<WriteStream>,
+    /// Field to know if the socket is ready to start communicating with the other half
+    ///
+    /// It's an [`AtomicBool`] in order to meet the requirements of the [`Transport`] trait that doesn't have mutable methods so we should do _Interior Mutability_
+    ///
     ready: AtomicBool,
 }
 

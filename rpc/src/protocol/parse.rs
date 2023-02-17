@@ -30,6 +30,7 @@ pub fn parse_header(data: &[u8]) -> Option<(RpcMessageTypes, u32)> {
 }
 
 /// Parse protocol message from bytes
+///
 /// Returns None when message can't be parsed or should not do it
 pub fn parse_protocol_message<R: Message + Default>(data: &[u8]) -> Option<(u32, u32, R)> {
     let (message_type, message_number) = parse_header(data).unwrap();
@@ -59,10 +60,7 @@ mod tests {
     #[test]
     fn test_parse_protocol_message() {
         let port = CreatePort {
-            message_identifier: build_message_identifier(
-                RpcMessageTypes::CreatePort as u32,
-                1,
-            ),
+            message_identifier: build_message_identifier(RpcMessageTypes::CreatePort as u32, 1),
             port_name: "port_name".to_string(),
         };
 
@@ -72,10 +70,7 @@ mod tests {
 
         assert!(parse_back.is_some());
         let parse_back = parse_back.unwrap();
-        assert_eq!(
-            parse_back.0,
-            RpcMessageTypes::CreatePort as u32
-        );
+        assert_eq!(parse_back.0, RpcMessageTypes::CreatePort as u32);
         // parse_protocol_message dont add the port_id, just parse it
         assert_eq!(parse_back.2.port_id, 0);
     }
