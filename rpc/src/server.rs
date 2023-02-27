@@ -22,16 +22,16 @@ use crate::{
 /// Handler that runs each time that a port is created
 type PortHandlerFn<Context> = dyn Fn(&mut RpcServerPort<Context>) + Send + Sync + 'static;
 
-/// Result type for all `RpcServer` functions
+/// Result type for all [`RpcServer`] functions
 pub type ServerResult<T> = Result<T, ServerError>;
 
 /// Server Procedure types
 enum Procedure<Context> {
     /// Unary Procedure. Basic request<>response
     Unary(Arc<UnaryRequestHandler<Context>>),
-    /// Server Streams Procedure. `RpcClient` sends a request and waits for the `RpcServer` to send all the data that it has and close the stream opened
+    /// Server Streams Procedure. `RpcClient` sends a request and waits for the [`RpcServer`] to send all the data that it has and close the stream opened
     ServerStreams(Arc<ServerStreamsRequestHandler<Context>>),
-    /// Client Streams Procedure. `RpcClient` sends a request and opens a stream in the `RpcServer`, then `RpcServer` waits for `RpcClient` to send all the payloads
+    /// Client Streams Procedure. `RpcClient` sends a request and opens a stream in the [`RpcServer`], then [`RpcServer`] waits for `RpcClient` to send all the payloads
     ClientStreams(Arc<ClientStreamsRequestHandler<Context>>),
     /// BiDirectional Streams Procedure. A stream is opened on both sides (client and server)
     BiStreams(Arc<BiStreamsRequestHandler<Context>>),
@@ -56,33 +56,33 @@ type TransportID = u32;
 
 type TransportMessage<T> = (Arc<dyn Transport + Send + Sync>, T);
 
-/// Events that the `RpcServer` has to react to
+/// Events that the [`RpcServer`] has to react to
 enum ServerEvents {
     AttachTransport(Arc<dyn Transport + Send + Sync>),
     NewTransport(TransportID, Arc<dyn Transport + Send + Sync>),
 }
 
-/// Notifications about Transports connected to the `RpcServer`
+/// Notifications about Transports connected to the [`RpcServer`]
 enum TransportNotification {
     /// New message received from a transport
     NewMessage(TransportMessage<TransportEvent>),
     /// New error received from a transport
     NewErrorMessage(TransportMessage<TransportError>),
-    /// A Notification for when a `ServerEvents::AttachTransport` is received in order to attach a transport to the server `RpcServer::attach_transport` and make it run to receive messages
+    /// A Notification for when a `ServerEvents::AttachTransport` is received in order to attach a transport to the server [`RpcServer`](#method.RpcServer.attach_transport) and make it run to receive messages
     MustAttachTransport(Arc<dyn Transport + Send + Sync>),
-    /// Close Transport Notification in order to remove it from the `RpcServer` state
+    /// Close Transport Notification in order to remove it from the [`RpcServer`] state
     CloseTransport(TransportID),
 }
 
-/// Structure to send events to the server from outside
+/// Structure to send events to the server from outside. It's a wrapper for a [`tokio::sync::mpsc::UnboundedSender`] from a channel so that we can send events from another thread e.g for a Websocket listener.
 pub struct ServerEventsSender(UnboundedSender<ServerEvents>);
 
 impl ServerEventsSender {
-    /// Sends a `ServerEvents::AttachTransport` to the `RpcServer`
+    /// Sends a `ServerEvents::AttachTransport` to the [`RpcServer`]
     ///
     /// This allows you to notify the server that has to attach a new transport and make it run to listen for new messages
     ///
-    /// This is equivalent to `RpcServer::attach_transport` but it can be used to attach a transport to the `RpcServer` from another spawned thread (or background task)
+    /// This is equivalent to `RpcServer::attach_transport` but it can be used to attach a transport to the [`RpcServer`] from another spawned thread (or background task)
     ///
     /// This allows you to listen on a port in a background task for external connections and attach multiple transports that want to connect to the server
     pub fn send_attach_transport<T: Transport + Send + Sync + 'static>(
@@ -125,11 +125,11 @@ impl Clone for ServerEventsSender {
 /// Once a RpcServer is inited, you should attach a transport and handler
 /// for the port creation.
 pub struct RpcServer<Context> {
-    /// The Transport used for the communication between `RpcClient` and `RpcServer`
+    /// The Transport used for the communication between `RpcClient` and [`RpcServer`]
     transports: HashMap<TransportID, Arc<dyn Transport + Send + Sync>>,
     /// The handler executed when a new port is created
     handler: Option<Box<PortHandlerFn<Context>>>,
-    /// Ports registered in the `RpcServer`
+    /// Ports registered in the [`RpcServer`]
     ports: HashMap<u32, RpcServerPort<Context>>,
     /// RpcServer Context
     context: Arc<Context>,
@@ -137,11 +137,11 @@ pub struct RpcServer<Context> {
     ///
     /// It's stored inside an `Arc` because it'll be shared between threads
     messages_handler: Arc<ServerMessagesHandler>,
-    /// `ServerEventsSender` structure that contains the sender half of a channel to send `ServerEvents` to the `RpcServer`
+    /// `ServerEventsSender` structure that contains the sender half of a channel to send `ServerEvents` to the [`RpcServer`]
     server_events_sender: ServerEventsSender,
-    /// The receiver half of a channel that receives `ServerEvents` which the `RpcServer` has to react to
+    /// The receiver half of a channel that receives `ServerEvents` which the [`RpcServer`] has to react to
     ///
-    /// It's an Option so that we can take ownership of it and remove it from the `RpcServer`, and make it run in a background task
+    /// It's an Option so that we can take ownership of it and remove it from the [`RpcServer`], and make it run in a background task
     server_events_receiver: Option<UnboundedReceiver<ServerEvents>>,
     /// The id that will be assigned if a new transport is a attached
     next_transport_id: u32,
@@ -168,7 +168,7 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
 
     /// Attaches the server half of the transport for Client<>Server communications
     ///
-    /// It differs from sending the `ServerEvents::AtacchTransport` because it can only be used to attach transport from the current thread where the `RpcServer` was initalized due to the mutably borrow
+    /// It differs from sending the `ServerEvents::AtacchTransport` because it can only be used to attach transport from the current thread where the [`RpcServer`] was initalized due to the mutably borrow
     ///
     pub fn attach_transport<T: Transport + Send + Sync + 'static>(
         &mut self,
@@ -263,9 +263,9 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
     /// It spawns a background task to listen on the channel for new events and executes different actions depending on the event.
     ///
     /// # Events
-    /// - `ServerEvent::NewTransport` : Spawns a background task to listen on the transport for new `TransportEvent` and then it sends that new event to the `RpcServer`
+    /// - `ServerEvent::NewTransport` : Spawns a background task to listen on the transport for new `TransportEvent` and then it sends that new event to the [`RpcServer`]
     /// - `ServerEvent::TransportFinished` : Collect in memory the amount of transports that already finished and when the amount is equal to the total running transport, it emits `ServerEvents::Terminated`
-    /// - `ServerEvent::Terminated` : Close the `RpcServer` transports notfier (channel) and events channel
+    /// - `ServerEvent::Terminated` : Close the [`RpcServer`] transports notfier (channel) and events channel
     ///
     fn process_server_events(
         &mut self,
