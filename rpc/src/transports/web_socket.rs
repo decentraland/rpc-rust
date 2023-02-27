@@ -38,7 +38,7 @@ pub struct WebSocketServer {
 
 /// Receiver half of a channel to get notified that there is a new connection
 ///
-/// And then attach turn the connection into a transport and attach it to the `RpcServer`
+/// And then attach turn the connection into a transport and attach it to the [`RpcServer`]
 ///
 type OnConnectionListener = UnboundedReceiver<Result<Socket, TransportError>>;
 

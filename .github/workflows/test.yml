@@ -13,7 +13,12 @@ jobs:
       - name: Install Protoc
         uses: arduino/setup-protoc@v1
       - uses: actions/checkout@v2
+      - uses: Swatinem/rust-cache@v1.3.0
       - name: Build
         run: cargo build --verbose
       - name: Test
         run: cargo test --verbose
+      - uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --all-features
