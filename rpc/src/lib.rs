@@ -17,40 +17,7 @@
 //!
 //! The `RpcServer` shares a context through all its registered modules. This context should have the app context, like a database connection/component. Every procedure can access and use the server context, and the same instance of the context is shared between them (`Arc<Context>`).
 //!
-//! ## Basic Example
-//! ```rust
-//! let (client_transport, server_transport) = dcl_rpc::transports::memory::MemoryTransport::create();
-//! let client_handle = tokio::spawn(async move {
-//!     let mut client: dcl_rpc::client::RpcClient = dcl_rpc::client::RpcClient::new(client_transport).await.unwrap();
-//!     let client_port: dcl_rpc::client::RpcClientPort = match client.create_port("TEST_PORT").await {
-//!         Ok(port) => {
-//!             port
-//!         }
-//!         Err(err) => {
-//!         }
-//!     };
-//!     let module: ExampleModuleClient = client_port.load_module::<ExampleModuleClient>("ExampleModuleClient").await.unwrap()
-//!     module.example_request_procedure().await;
-//!
-//! })
-//! let server_handle = tokio::spawn(async move {
-//!     let context = ExampleContext {
-//!         db: create_db()
-//!     };
-//!     let server = dcl_rpc::server::RpcServer::new(context);
-//!     server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
-//!         BookServiceCodeGen::register_service(port, book_service::BookService {})
-//!      });
-//!     server.attach_transport(server_transport);
-//!
-//!     server.run().await;
-//! })
-//! client_handle.await.unwrap();
-//! server_handle.await.unwrap();
-//!
-//! ```
-//!
-//! You could find more complex examples on the github repository.
+//! You could find basic and complex examples in the "examples" folder on the github repository.
 //!
 
 pub mod client;
