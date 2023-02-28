@@ -1,4 +1,4 @@
-# RPC Rust
+# dcl-rpc
 
 [![Build](https://github.com/decentraland/rpc-rust/workflows/Validations/badge.svg)](
 https://github.com/decentraland/rpc-rust/actions)
@@ -9,9 +9,15 @@ https://crates.io/crates/dcl-rpc)
 [![Documentation](https://docs.rs/dcl-rpc/badge.svg)](
 https://docs.rs/dcl-rpc)
 
+The Rust implementation of Decentraland RPC. At Decentraland, we have our own implementation of RPC for communications between the different services.
+
+Currently, there are other implementations: 
+- [Typescript](https://github.com/decentraland/rpc) 
+- [C#](https://github.com/decentraland/rpc-csharp).
+
 ## Requirements
 
-Install protoc binaries
+- Install protoc binaries
 
 ### MacOS
 ```bash
@@ -23,6 +29,8 @@ brew install protobuf
 sudo apt-get install protobuf-compiler
 ```
 
+- Install Just
+
 ### Install Just for commands
 ```bash
 cargo install just
@@ -32,10 +40,12 @@ cargo install just
 
 `cargo build`
 
-## Run the integration example
+## Examples
+
+### Run the integration example: RPC Client in Rust and RPC Server in Rust
 
 `just run-integration`
 
-## Run the multi language integration example
+### Run the multi language integration example: RPC Client in Typescript and RPC Server in Rust
 
 `just run-multilang`
