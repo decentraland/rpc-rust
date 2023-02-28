@@ -13,7 +13,7 @@ The Rust implementation of Decentraland RPC. At Decentraland, we have our own im
 
 Currently, there are other implementations: 
 - [Typescript](https://github.com/decentraland/rpc) 
-- [C#](https://github.com/decentraland/rpc-csharp).
+- [C#](https://github.com/decentraland/rpc-csharp)
 
 ## Requirements
 
