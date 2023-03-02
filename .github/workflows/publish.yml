@@ -22,3 +22,6 @@ jobs:
       - run: cargo publish --token ${CRATES_TOKEN} -p dcl-rpc
         env:
           CRATES_TOKEN: ${{ secrets.CRATESIO_TOKEN }}
+      - run: cargo publish --token ${CRATES_TOKEN} -p dcl-rpc-codegen
+        env:
+          CRATES_TOKEN: ${{ secrets.CRATESIO_TOKEN }}
