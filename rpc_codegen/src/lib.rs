@@ -294,7 +294,7 @@ impl RPCServiceGenerator {
                     let server_streams = service
                         .#method_name(#input_type::decode(request.as_slice()).unwrap(), context)
                         .await;
-                    // Transforming and filling the new generator is spawned so the response it quick
+                    // Transforming and filling the new generator is spawned so the response is quick
                     Generator::from_generator(server_streams, |item| item.encode_to_vec())
                 })
             });
