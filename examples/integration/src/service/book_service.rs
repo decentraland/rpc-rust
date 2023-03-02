@@ -1,18 +1,16 @@
 use crate::{
-    codegen::{ClientStreamRequest, ServerStreamResponse},
-    Book, GetBookRequest, MyExampleContext, QueryBooksRequest,
+    Book, BookServiceWithContext, ClientStreamRequest, GetBookRequest, MyExampleContext,
+    QueryBooksRequest, ServerStreamResponse,
 };
 use std::{sync::Arc, time::Duration};
 
 use dcl_rpc::stream_protocol::Generator;
 use tokio::time::sleep;
 
-use crate::codegen::server::BookServiceInterface;
-
-pub struct BookService {}
+pub struct MyBookService {}
 
 #[async_trait::async_trait]
-impl BookServiceInterface<MyExampleContext> for BookService {
+impl BookServiceWithContext<MyExampleContext> for MyBookService {
     async fn get_book(&self, request: GetBookRequest, ctx: Arc<MyExampleContext>) -> Book {
         assert_eq!(ctx.hardcoded_database.len(), 5);
 
@@ -64,7 +62,7 @@ impl BookServiceInterface<MyExampleContext> for BookService {
         ctx.hardcoded_database[0].clone()
     }
 
-    async fn query_books_streams(
+    async fn query_books_stream(
         &self,
         mut request: ClientStreamRequest<GetBookRequest>,
         ctx: Arc<MyExampleContext>,
