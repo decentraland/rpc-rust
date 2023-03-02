@@ -1,7 +1,7 @@
-//! Rust Implementation of Decentrlanad RPC.
+//! Rust Implementation of Decentralanad RPC.
 //!
 //! Communicates between different services written in different languages, just sharing a `.proto` file.
-//! Decentrland RPC implementation uses protobuffer as the messaging format and you can create custom transports (muest meet [trait][`crate::transports::Transport`] requirements) or use the existing ones for communication.
+//! Decentraland RPC implementation uses protobuffer as the messaging format and you can create custom transports (muest meet [trait][`crate::transports::Transport`] requirements) or use the existing ones for communication.
 //!
 //! The communication is carried out by a client (or many ones) and a server. A [`crate::client::RpcClient`] connects to a [`crate::server::RpcServer`]. A `RpcServer` accepts multiple clients.
 //! For example, the `RpcServer` could have a WebSocket server listening for new connections for then [attaching][`crate::server::RpcServer::attach_transport`] each new connection socket to the `RpcServer`.
