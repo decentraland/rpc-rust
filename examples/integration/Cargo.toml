@@ -22,6 +22,7 @@ rcgen.workspace = true
 
 [build-dependencies]
 prost-build = "0.11.5"
+dcl-rpc-codegen = { path = "../../rpc_codegen" }
 
 [[bin]]
 name = "integration"

@@ -1,3 +1,6 @@
+use integration::BookService;
+use integration::BookServiceClient;
+use integration::BookServiceRegistration;
 use std::{env, time::Duration};
 
 use dcl_rpc::{
@@ -13,10 +16,6 @@ use dcl_rpc::{
     },
 };
 use integration::{
-    codegen::{
-        client::{BookServiceClient, BookServiceClientInterface},
-        server::BookServiceCodeGen,
-    },
     service::book_service,
     setup_quic::{configure_client, generate_self_signed_cert},
     Book, GetBookRequest, MyExampleContext, QueryBooksRequest,
@@ -137,7 +136,7 @@ async fn run_memory_transport() {
 
         let mut server = RpcServer::create(ctx);
         server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
-            BookServiceCodeGen::register_service(port, book_service::BookService {})
+            BookServiceRegistration::register_service(port, book_service::MyBookService {})
         });
 
         // Not needed to use the server events sender it can be attached direcrly
@@ -209,7 +208,7 @@ async fn run_ws_tramsport() {
 
         let mut server = RpcServer::create(ctx);
         server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
-            BookServiceCodeGen::register_service(port, book_service::BookService {})
+            BookServiceRegistration::register_service(port, book_service::MyBookService {})
         });
 
         // It has to use the server events sender to attach transport because it has to wait for client connections
@@ -373,7 +372,7 @@ async fn handle_client_connection<T: Transport + Send + Sync + 'static>(
                 .unwrap();
         }
     });
-    let mut response = book_service_module.query_books_streams(generator).await;
+    let mut response = book_service_module.query_books_stream(generator).await;
 
     while let Some(book) = response.next().await {
         println!("> BiDir Streams > Response > QueryBooksStream {:?}", book)

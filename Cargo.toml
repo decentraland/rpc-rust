@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "rpc",
+  "rpc_codegen",
   "examples/integration",
   "examples/integration-multi-lang"
 ]
