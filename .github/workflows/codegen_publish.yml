@@ -1,9 +1,7 @@
-name: Publish
+name: Publish RPC Codegen
 
-on:
-  release:
-    types:
-      - created
+on: 
+  workflow_dispatch:
 
 jobs:
   publish:
@@ -19,7 +17,6 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-      - run: cargo publish --token ${CRATES_TOKEN} -p dcl-rpc
+      - run: cargo publish --token ${CRATES_TOKEN} -p dcl-rpc-codegen
         env:
           CRATES_TOKEN: ${{ secrets.CRATESIO_TOKEN }}
-
