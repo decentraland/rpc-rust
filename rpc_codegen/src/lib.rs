@@ -113,6 +113,10 @@ impl RPCServiceGenerator {
         buf.push_str("}\n");
     }
 
+    fn get_server_service_name(&self, service: &Service) -> String {
+        format!("Shared{}", service.name)
+    }
+
     fn generate_server_trait(&self, service: &Service, buf: &mut String) {
         buf.push_str("use std::sync::Arc;\n");
         // This is done with strings rather than tokens because Prost provides functions that
@@ -122,8 +126,8 @@ impl RPCServiceGenerator {
 
         buf.push_str("#[async_trait::async_trait]\n");
         buf.push_str(&format!(
-            "pub trait {}WithContext<Context>: Send + Sync + 'static {{",
-            service.name
+            "pub trait {}<Context>: Send + Sync + 'static {{",
+            self.get_server_service_name(service)
         ));
         for method in service.methods.iter() {
             buf.push('\n');
@@ -220,7 +224,7 @@ impl RPCServiceGenerator {
         buf.push_str("use dcl_rpc::service_module_definition::ServiceModuleDefinition;\n");
         buf.push_str("use prost::Message;\n");
 
-        let name = format!("{}CodeGen", service.name);
+        let name = format!("{}Registration", service.name);
         buf.push('\n');
         buf.push_str(&format!("pub struct {} {{}}\n", name));
         buf.push('\n');
@@ -233,7 +237,7 @@ impl RPCServiceGenerator {
 
     fn generate_register_service(&self, service: &Service) -> TokenStream {
         let service_name = &service.name;
-        let name = format!("{}WithContext", service_name);
+        let name = self.get_server_service_name(service);
         let trait_name: TokenStream = name.parse().unwrap();
 
         let mut methods: Vec<TokenStream> = vec![];

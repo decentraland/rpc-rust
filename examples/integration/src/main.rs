@@ -1,6 +1,6 @@
 use integration::BookService;
 use integration::BookServiceClient;
-use integration::BookServiceCodeGen;
+use integration::BookServiceRegistration;
 use std::{env, time::Duration};
 
 use dcl_rpc::{
@@ -136,7 +136,7 @@ async fn run_memory_transport() {
 
         let mut server = RpcServer::create(ctx);
         server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
-            BookServiceCodeGen::register_service(port, book_service::MyBookService {})
+            BookServiceRegistration::register_service(port, book_service::MyBookService {})
         });
 
         // Not needed to use the server events sender it can be attached direcrly
@@ -208,7 +208,7 @@ async fn run_ws_tramsport() {
 
         let mut server = RpcServer::create(ctx);
         server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
-            BookServiceCodeGen::register_service(port, book_service::MyBookService {})
+            BookServiceRegistration::register_service(port, book_service::MyBookService {})
         });
 
         // It has to use the server events sender to attach transport because it has to wait for client connections

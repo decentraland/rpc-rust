@@ -1,6 +1,6 @@
 use crate::{
-    Book, BookServiceWithContext, ClientStreamRequest, GetBookRequest, MyExampleContext,
-    QueryBooksRequest, ServerStreamResponse,
+    Book, ClientStreamRequest, GetBookRequest, MyExampleContext, QueryBooksRequest,
+    ServerStreamResponse, SharedBookService,
 };
 use std::{sync::Arc, time::Duration};
 
@@ -10,7 +10,7 @@ use tokio::time::sleep;
 pub struct MyBookService {}
 
 #[async_trait::async_trait]
-impl BookServiceWithContext<MyExampleContext> for MyBookService {
+impl SharedBookService<MyExampleContext> for MyBookService {
     async fn get_book(&self, request: GetBookRequest, ctx: Arc<MyExampleContext>) -> Book {
         assert_eq!(ctx.hardcoded_database.len(), 5);
 
