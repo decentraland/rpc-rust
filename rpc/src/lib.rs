@@ -1,4 +1,4 @@
-//! Rust Implementation of Decentralanad RPC.
+//! Rust Implementation of Decentraland RPC.
 //!
 //! Communicates between different services written in different languages, just sharing a `.proto` file.
 //! Decentraland RPC implementation uses protobuffer as the messaging format and you can create custom transports (muest meet [trait][`crate::transports::Transport`] requirements) or use the existing ones for communication.
