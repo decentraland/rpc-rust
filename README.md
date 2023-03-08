@@ -131,7 +131,7 @@ server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
   EchoServiceRegistration::register_service(port, echo_service::EchoService {})
 });
 
-The WebSocket Server ?) listens for incoming connections, when a connection is established, it creates a new WebSocketTransport with that connection and attaches it to the server event sender. The loop continues to listen for incoming connections and attach transports until it is stopped.
+// The WebSocket Server ?) listens for incoming connections, when a connection is established, it creates a new WebSocketTransport with that connection and attaches it to the server event sender. The loop continues to listen for incoming connections and attach transports until it is stopped.
 // and keep waiting for new ones
 let server_events_sender = server.get_server_events_sender();
 tokio::spawn(async move {
