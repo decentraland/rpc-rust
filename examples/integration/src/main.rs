@@ -99,7 +99,7 @@ async fn main() {
             run_memory_transport().await;
         } else if example == "ws" {
             println!("--- Running example with Web Socket Transports ---");
-            run_ws_tramsport().await;
+            run_ws_transport().await;
         }
         // TODO: fix QUIC transport (similar to ws fix)
         // } else if example == "quic" {
@@ -110,7 +110,7 @@ async fn main() {
         println!("--- Running example with Memory Transports ---");
         run_memory_transport().await;
         println!("--- Running example with Web Socket Transports ---");
-        run_ws_tramsport().await;
+        run_ws_transport().await;
         // TODO: fix QUIC transport (similar to ws fix)
         // println!("--- Running example with QUIC Transports ---");
         // run_with_transports(TransportType::QUIC).await;
@@ -175,7 +175,7 @@ async fn run_memory_transport() {
     }
 }
 
-async fn run_ws_tramsport() {
+async fn run_ws_transport() {
     let ws_server = WebSocketServer::new("127.0.0.1:8080");
 
     let mut connection_listener = ws_server.listen().await.unwrap();
