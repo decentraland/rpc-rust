@@ -60,12 +60,12 @@ cargo install just
 
 ```toml
 [dependencies]
-dcl-rpc = "latest"
+dcl-rpc = "*"
 
 [build-dependencies]
-prost-build = "latest"
-dcl-rpc-codegen = "latest"
-````
+prost-build = "*"
+dcl-rpc-codegen = "*"
+```
 
 ### Protobuf
 
@@ -87,7 +87,7 @@ service EchoService {
 Then, define a `build.rs` file to build the types of the message:
 
 ```rust
-  use std::io::Result;
+use std::io::Result;
 
 fn main() -> Result<()> {
     // Tell Cargo that if the given file changes, to rerun this build script.
@@ -100,20 +100,32 @@ fn main() -> Result<()> {
 }
 ```
 
-That code will build the necessary modules to support the custom messages defined in the protobuf and use them in Rust, and also generate the necessary code for the Service Interface, leaving to the user the implementation of the logic.
+The `build.rs` script runs every time that your `.proto` changes. The script will generate a file in the `OUT_DIR`, named as the `package` field in the `.proto` file (if it's not declared, the name will be '_.rs'). This file will include: 
+- All your declared messages in the `.proto` as Rust structs. *1
+- A trait, named `Shared{YOUR_RPC_SERVICE_NAME}`, with the methods declared in your service for the server side so you should use this trait to build an implementation with the business logic. *2
+- A trait and an implementation of it for the client side. You must use this auto-generated implementation when using the `RpcClient`, passing the struct with the implementation as a generic in the `load_module` function. *3
+- A struct in charge of registering your declared service when a `RpcServerPort` is created. You should use this struct and its registering function inside the `RpcServer` port creation handler. *4
 
-To import them you will need to add:
+To import them you must add:
 
 ```rust
 include!(concat!(env!("OUT_DIR"), "/decentraland.echo.rs"));
 ```
 
-This include should be done in the `src/lib.rs` so the entire crate handle types correctly, otherwise it will treat every include as different types.
+This statement should be added to the `src/lib.rs` in order to make the auto-generated code part of your crate, otherwise it will treat every include as different types.
 
 ### Server Side
 
 ```rust
-use dcl_rpc::{transports::web_socket::{WebSocketServer, WebSocketTransport}, server::{RpcServer, RpcServerPort}, service_module_definition::{Definition, ServiceModuleDefinition, CommonPayload}};
+use dcl_rpc::{
+    transports::web_socket::{WebSocketServer, WebSocketTransport}, 
+    server::{RpcServer, RpcServerPort}, 
+    service_module_definition::{Definition, ServiceModuleDefinition, CommonPayload}
+};
+
+use crate::{
+    EchoServiceRegistration, // (*4)
+};
 
 // Define the IP and Port where the WebSocket Server will run
 let ws_server = WebSocketServer::new("localhost:8080");
@@ -155,7 +167,13 @@ server.run().await;
 Implement the trait for your service
 
 ```rust
-use crate::{MyExampleContext, SharedEchoService, Text};
+use crate::{
+    MyExampleContext, 
+    SharedEchoService, // (*2)
+    Text // (*1) message
+};
+
+pub struct MyEchoService;
 
 #[async_trait::async_trait]
 impl SharedEchoService<MyExampleContext> for MyEchoService {
@@ -170,10 +188,9 @@ impl SharedEchoService<MyExampleContext> for MyEchoService {
 Initiate a WebSocket Client Connection and send a Hello World message to the echo server.
 
 ```rust
-use codegen::client::{EchoServiceClient, EchoServiceClientInterface};
+use crate::EchoServiceClient // (*3)
 use dcl_rpc::{transports::web_socket::{WebSocketClient, WebSocketTransport}, client::RpcClient};
 use ws_rust::Text;
-mod codegen;
 
 let client_connection = WebSocketClient::connect("ws://localhost:8080")
     .await
