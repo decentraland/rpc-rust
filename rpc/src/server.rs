@@ -683,7 +683,7 @@ impl<Context> RpcServerPort<Context> {
                             Definition::ServerStreams(ref procedure) => self
                                 .procedures
                                 .insert(current_id, Definition::ServerStreams(procedure.clone())),
-                            &Definition::ClientStreams(ref procedure) => self
+                            Definition::ClientStreams(ref procedure) => self
                                 .procedures
                                 .insert(current_id, Definition::ClientStreams(procedure.clone())),
                             Definition::BiStreams(ref procedure) => self
