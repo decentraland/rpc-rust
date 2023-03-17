@@ -12,6 +12,12 @@ use quote::{format_ident, quote};
 #[derive(Default)]
 pub struct RPCServiceGenerator {}
 
+
+pub struct MethodSigTokensParams {
+    body: Option<TokenStream>,
+    with_context: bool,
+}
+
 impl RPCServiceGenerator {
     pub fn new() -> RPCServiceGenerator {
         Default::default()
@@ -25,11 +31,8 @@ impl RPCServiceGenerator {
         quote!(ServerStreamResponse)
     }
 
-    fn method_sig_tokens(&self, method: &Method, body: Option<TokenStream>) -> TokenStream {
-        let name = format_ident!("{}", method.name);
+    fn method_sig_tokens(&self, method: &Method, params: MethodSigTokensParams) -> TokenStream {
         let input_type = format_ident!("{}", method.input_type);
-        let output_type = format_ident!("{}", method.output_type);
-
         let input_type = if method.client_streaming {
             let client_stream_request = self.client_stream_request();
             quote!(#client_stream_request<#input_type>)
@@ -37,6 +40,7 @@ impl RPCServiceGenerator {
             quote!(#input_type)
         };
 
+        let output_type = format_ident!("{}", method.output_type);
         let output_type = if method.server_streaming {
             let server_stream_response = self.server_stream_response();
             quote!(#server_stream_response<#output_type>)
@@ -44,6 +48,8 @@ impl RPCServiceGenerator {
             quote!(#output_type)
         };
 
+        let name = format_ident!("{}", method.name);
+        let body = params.body;
         if let Some(body) = body {
             quote! {
                 async fn #name(&self, request: #input_type)
@@ -51,36 +57,16 @@ impl RPCServiceGenerator {
                         #body
                     }
             }
+        } else if params.with_context {
+            quote! {
+                async fn #name(&self, request: #input_type, context: Arc<Context>)
+                    -> #output_type
+            }
         } else {
             quote! {
                 async fn #name(&self, request: #input_type)
                     -> #output_type
             }
-        }
-    }
-
-    fn method_sig_tokens_with_context(&self, method: &Method) -> TokenStream {
-        let name = format_ident!("{}", method.name);
-        let input_type = format_ident!("{}", method.input_type);
-        let output_type = format_ident!("{}", method.output_type);
-
-        let input_type = if method.client_streaming {
-            let client_stream_request = self.client_stream_request();
-            quote!(#client_stream_request<#input_type>)
-        } else {
-            quote!(#input_type)
-        };
-
-        let output_type = if method.server_streaming {
-            let server_stream_response = self.server_stream_response();
-            quote!(#server_stream_response<#output_type>)
-        } else {
-            quote!(#output_type)
-        };
-
-        quote! {
-            async fn #name(&self, request: #input_type, context: Arc<Context>)
-                -> #output_type
         }
     }
 
@@ -108,7 +94,7 @@ impl RPCServiceGenerator {
         for method in service.methods.iter() {
             buf.push('\n');
             method.comments.append_with_indent(1, buf);
-            buf.push_str(&format!("    {};\n", self.method_sig_tokens(method, None)));
+            buf.push_str(&format!("    {};\n", self.method_sig_tokens(method, MethodSigTokensParams{ body: None, with_context: false })));
         }
         buf.push_str("}\n");
     }
@@ -134,7 +120,7 @@ impl RPCServiceGenerator {
             method.comments.append_with_indent(1, buf);
             buf.push_str(&format!(
                 "    {};\n",
-                self.method_sig_tokens_with_context(method)
+                self.method_sig_tokens(method, MethodSigTokensParams{ body: None, with_context: true })
             ));
         }
         buf.push_str("}\n");
@@ -177,7 +163,7 @@ impl RPCServiceGenerator {
             };
             buf.push_str(&format!(
                 "    {}\n",
-                self.method_sig_tokens(method, Some(body))
+                self.method_sig_tokens(method, MethodSigTokensParams{ body:  Some(body), with_context: false })
             ));
         }
         buf.push_str("}\n");
