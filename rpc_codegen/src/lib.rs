@@ -32,8 +32,21 @@ impl RPCServiceGenerator {
     }
 
     fn method_sig_tokens(&self, method: &Method, params: MethodSigTokensParams) -> TokenStream {
+        let input_type = self.extract_input_token(method);
+        let output_type = self.extract_output_token(method);
+        let name = extract_name_token(method);
+        let context = extract_context_token(&params);
+        let body = extract_body_token(params);
+        
+        quote! {
+            async fn #name(&self, request: #input_type #context)
+                #output_type #body
+        }
+    }
+
+    fn extract_input_token(&self, method: &Method) -> TokenStream {
         let input_type = if method.input_type.to_string().eq("()") {
-            quote! { () }
+            TokenStream::default() 
         } else {
             let input_type = format_ident!("{}", method.input_type);
             if method.client_streaming {
@@ -43,9 +56,12 @@ impl RPCServiceGenerator {
                 quote!(#input_type)
             }
         };
+        input_type
+    }
 
+    fn extract_output_token(&self, method: &Method) -> TokenStream {
         let output_type = if method.output_type.to_string().eq("()") {
-            quote! {} 
+            TokenStream::default() 
         } else {
             let output_type = format_ident!("{}", method.output_type);
             if method.server_streaming {
@@ -55,27 +71,7 @@ impl RPCServiceGenerator {
                 quote! {-> #output_type}
             }
         };
-
-        let name = format_ident!("{}", method.name);
-        let body = params.body;
-        if let Some(body) = body {
-            quote! {
-                async fn #name(&self, request: #input_type)
-                    #output_type {
-                        #body
-                    }
-            }
-        } else if params.with_context {
-            quote! {
-                async fn #name(&self, request: #input_type, context: Arc<Context>)
-                    #output_type
-            }
-        } else {
-            quote! {
-                async fn #name(&self, request: #input_type)
-                    #output_type
-            }
-        }
+        output_type
     }
 
     fn generate_stream_types(&self, buf: &mut String) {
@@ -337,6 +333,27 @@ impl RPCServiceGenerator {
                 })
             });
         }
+    }
+}
+
+fn extract_name_token(method: &Method) -> proc_macro2::Ident {
+    format_ident!("{}", method.name)
+}
+
+fn extract_context_token(params: &MethodSigTokensParams) -> TokenStream {
+    if params.with_context {
+        quote! {, context: Arc<Context>}
+    } else {
+        TokenStream::default()
+    }
+}
+
+fn extract_body_token(params: MethodSigTokensParams) -> TokenStream {
+    let body = params.body;
+    if let Some(body) = body {
+        quote! { { #body } }
+    } else {
+        TokenStream::default()
     }
 }
 
