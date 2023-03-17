@@ -285,10 +285,10 @@ async fn run_with_dyn_transport() {
         });
 
         // Cast Arc<> to use multiple transport types in the server
-        let server_memory_transprt_to_arc: Arc<dyn Transport> = Arc::new(server_memory_transport);
+        let server_memory_transport_to_arc: Arc<dyn Transport> = Arc::new(server_memory_transport);
 
         server
-            .attach_transport(server_memory_transprt_to_arc)
+            .attach_transport(server_memory_transport_to_arc)
             .unwrap();
 
         // It has to use the server events sender to attach transport because it has to wait for client connections
