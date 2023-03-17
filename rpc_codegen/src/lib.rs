@@ -45,14 +45,14 @@ impl RPCServiceGenerator {
         };
 
         let output_type = if method.output_type.to_string().eq("()") {
-            quote! { () } 
+            quote! {} 
         } else {
             let output_type = format_ident!("{}", method.output_type);
             if method.server_streaming {
                 let server_stream_response = self.server_stream_response();
-                quote!(#server_stream_response<#output_type>)
+                quote! {-> #server_stream_response<#output_type>}
             } else {
-                quote!(#output_type)
+                quote! {-> #output_type}
             }
         };
 
@@ -61,19 +61,19 @@ impl RPCServiceGenerator {
         if let Some(body) = body {
             quote! {
                 async fn #name(&self, request: #input_type)
-                    -> #output_type {
+                    #output_type {
                         #body
                     }
             }
         } else if params.with_context {
             quote! {
                 async fn #name(&self, request: #input_type, context: Arc<Context>)
-                    -> #output_type
+                    #output_type
             }
         } else {
             quote! {
                 async fn #name(&self, request: #input_type)
-                    -> #output_type
+                    #output_type
             }
         }
     }
