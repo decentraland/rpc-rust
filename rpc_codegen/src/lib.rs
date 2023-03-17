@@ -141,7 +141,7 @@ impl RPCServiceGenerator {
         buf.push_str("use dcl_rpc::client::{RpcClientModule, ServiceClient};");
         buf.push_str(&format!("pub struct {}Client {{", service.name));
         buf.push_str(&format!("    {},\n", "rpc_client_module: RpcClientModule"));
-        buf.push_str("}");
+        buf.push('}');
 
         buf.push('\n');
 
@@ -237,10 +237,10 @@ impl RPCServiceGenerator {
         let mut methods: Vec<TokenStream> = vec![];
         for method in &service.methods {
             methods.push(match (method.client_streaming, method.server_streaming) {
-                (false, false) => self.generate_add_unary_call(&method),
-                (false, true) => self.generate_add_server_streams_procedure(&method),
-                (true, false) => self.generate_add_client_streams_procedure(&method),
-                (true, true) => self.generate_add_bidir_streams_procedure(&method),
+                (false, false) => self.generate_add_unary_call(method),
+                (false, true) => self.generate_add_server_streams_procedure(method),
+                (true, false) => self.generate_add_client_streams_procedure(method),
+                (true, true) => self.generate_add_bidir_streams_procedure(method),
             });
         }
         quote! {
@@ -347,7 +347,7 @@ impl ServiceGenerator for RPCServiceGenerator {
         self.generate_client_service(&service, buf);
         self.generate_server_trait(&service, buf);
         self.generate_server_service(&service, buf);
-        println!("{}", buf.to_string());
+        println!("{}", buf);
     }
 
     fn finalize(&mut self, _buf: &mut String) {}
