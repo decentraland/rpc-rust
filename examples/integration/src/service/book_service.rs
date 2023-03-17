@@ -12,7 +12,7 @@ pub struct MyBookService {}
 #[async_trait::async_trait]
 impl SharedBookService<MyExampleContext> for MyBookService {
 
-    async fn send_book(&self, _book: Book, _ctx: Arc<MyExampleContext>) -> () {
+    async fn send_book(&self, _book: Book, _ctx: Arc<MyExampleContext>) {
         // Do nothing as the db is mocked
     }
 
