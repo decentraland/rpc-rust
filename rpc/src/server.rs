@@ -54,30 +54,30 @@ pub enum ServerError {
 
 type TransportID = u32;
 
-type TransportMessage<T> = (Arc<dyn Transport + Send + Sync>, T);
+type TransportMessage<T, M> = (Arc<T>, M);
 
 /// Events that the [`RpcServer`] has to react to
-enum ServerEvents {
-    AttachTransport(Arc<dyn Transport + Send + Sync>),
-    NewTransport(TransportID, Arc<dyn Transport + Send + Sync>),
+enum ServerEvents<T: Transport + ?Sized> {
+    AttachTransport(Arc<T>),
+    NewTransport(TransportID, Arc<T>),
 }
 
 /// Notifications about Transports connected to the [`RpcServer`]
-enum TransportNotification {
+enum TransportNotification<T: Transport + ?Sized> {
     /// New message received from a transport
-    NewMessage(TransportMessage<TransportEvent>),
+    NewMessage(TransportMessage<T, TransportEvent>),
     /// New error received from a transport
-    NewErrorMessage(TransportMessage<TransportError>),
+    NewErrorMessage(TransportMessage<T, TransportError>),
     /// A Notification for when a `ServerEvents::AttachTransport` is received in order to attach a transport to the server [`RpcServer`](#method.RpcServer.attach_transport) and make it run to receive messages
-    MustAttachTransport(Arc<dyn Transport + Send + Sync>),
+    MustAttachTransport(Arc<T>),
     /// Close Transport Notification in order to remove it from the [`RpcServer`] state
     CloseTransport(TransportID),
 }
 
 /// Structure to send events to the server from outside. It's a wrapper for a [`tokio::sync::mpsc::UnboundedSender`] from a channel so that we can send events from another thread e.g for a Websocket listener.
-pub struct ServerEventsSender(UnboundedSender<ServerEvents>);
+pub struct ServerEventsSender<T: Transport + ?Sized>(UnboundedSender<ServerEvents<T>>);
 
-impl ServerEventsSender {
+impl<T: Transport + ?Sized> ServerEventsSender<T> {
     /// Sends a `ServerEvents::AttachTransport` to the [`RpcServer`]
     ///
     /// This allows you to notify the server that has to attach a new transport and make it run to listen for new messages
@@ -85,13 +85,13 @@ impl ServerEventsSender {
     /// This is equivalent to `RpcServer::attach_transport` but it can be used to attach a transport to the [`RpcServer`] from another spawned thread (or background task)
     ///
     /// This allows you to listen on a port in a background task for external connections and attach multiple transports that want to connect to the server
-    pub fn send_attach_transport<T: Transport + Send + Sync + 'static>(
-        &self,
-        transport: T,
-    ) -> ServerResult<()> {
+    ///
+    /// It receives the `Transport` inside an `Arc` because it must be sharable.
+    ///
+    pub fn send_attach_transport(&self, transport: Arc<T>) -> ServerResult<()> {
         if self
             .0
-            .send(ServerEvents::AttachTransport(Arc::new(transport)))
+            .send(ServerEvents::AttachTransport(transport))
             .is_err()
         {
             return Err(ServerError::UnableToNofifyServer);
@@ -99,11 +99,7 @@ impl ServerEventsSender {
         Ok(())
     }
 
-    fn send_new_transport(
-        &self,
-        id: TransportID,
-        transport: Arc<dyn Transport + Send + Sync>,
-    ) -> ServerResult<()> {
+    fn send_new_transport(&self, id: TransportID, transport: Arc<T>) -> ServerResult<()> {
         match self.0.send(ServerEvents::NewTransport(id, transport)) {
             Ok(_) => Ok(()),
             Err(_) => {
@@ -114,7 +110,7 @@ impl ServerEventsSender {
     }
 }
 
-impl Clone for ServerEventsSender {
+impl<T: Transport + ?Sized> Clone for ServerEventsSender<T> {
     fn clone(&self) -> Self {
         Self(self.0.clone())
     }
@@ -124,9 +120,9 @@ impl Clone for ServerEventsSender {
 ///
 /// Once a RpcServer is inited, you should attach a transport and handler
 /// for the port creation.
-pub struct RpcServer<Context> {
+pub struct RpcServer<Context, T: Transport + ?Sized> {
     /// The Transport used for the communication between `RpcClient` and [`RpcServer`]
-    transports: HashMap<TransportID, Arc<dyn Transport + Send + Sync>>,
+    transports: HashMap<TransportID, Arc<T>>,
     /// The handler executed when a new port is created
     handler: Option<Box<PortHandlerFn<Context>>>,
     /// Ports registered in the [`RpcServer`]
@@ -138,15 +134,15 @@ pub struct RpcServer<Context> {
     /// It's stored inside an `Arc` because it'll be shared between threads
     messages_handler: Arc<ServerMessagesHandler>,
     /// `ServerEventsSender` structure that contains the sender half of a channel to send `ServerEvents` to the [`RpcServer`]
-    server_events_sender: ServerEventsSender,
+    server_events_sender: ServerEventsSender<T>,
     /// The receiver half of a channel that receives `ServerEvents` which the [`RpcServer`] has to react to
     ///
     /// It's an Option so that we can take ownership of it and remove it from the [`RpcServer`], and make it run in a background task
-    server_events_receiver: Option<UnboundedReceiver<ServerEvents>>,
+    server_events_receiver: Option<UnboundedReceiver<ServerEvents<T>>>,
     /// The id that will be assigned if a new transport is a attached
     next_transport_id: u32,
 }
-impl<Context: Send + Sync + 'static> RpcServer<Context> {
+impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<Context, T> {
     pub fn create(ctx: Context) -> Self {
         let channel = unbounded_channel();
         Self {
@@ -162,7 +158,7 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
     }
 
     /// Get a `ServerEventsSender` to send allowed server events from outside
-    pub fn get_server_events_sender(&self) -> ServerEventsSender {
+    pub fn get_server_events_sender(&self) -> ServerEventsSender<T> {
         self.server_events_sender.clone()
     }
 
@@ -170,11 +166,9 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
     ///
     /// It differs from sending the `ServerEvents::AtacchTransport` because it can only be used to attach transport from the current thread where the [`RpcServer`] was initalized due to the mutably borrow
     ///
-    pub fn attach_transport<T: Transport + Send + Sync + 'static>(
-        &mut self,
-        transport: T,
-    ) -> ServerResult<()> {
-        let transport = Arc::new(transport);
+    /// It receives the `Transport` inside an `Arc` because it must be sharable.
+    ///
+    pub fn attach_transport(&mut self, transport: Arc<T>) -> ServerResult<()> {
         self.new_transport_attached(transport)
     }
 
@@ -182,10 +176,9 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
     ///
     /// This function is used when a transport is attached with`RpcServer::attach_transport` and with the `ServerEventsSender::send_attach_transport`
     ///
-    fn new_transport_attached(
-        &mut self,
-        transport: Arc<dyn Transport + Send + Sync>,
-    ) -> ServerResult<()> {
+    /// It receives the `Transport` inside an `Arc` because it must be sharable.
+    ///
+    fn new_transport_attached(&mut self, transport: Arc<T>) -> ServerResult<()> {
         let current_id = self.next_transport_id;
         match self
             .server_events_sender
@@ -209,7 +202,7 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
         // We use async_channel crate for this channel because we want our receiver to be cloned so that we can close it when no more transports are open
         // And after that, our server can exit because it knows that it wont receive more notifications
         let (transports_notifier, mut transports_notification_receiver) =
-            unbounded_channel::<TransportNotification>();
+            unbounded_channel::<TransportNotification<T>>();
         // Spawn a task to process ServerEvents in background
         self.process_server_events(transports_notifier);
         // loop on transports_notifier
@@ -269,7 +262,7 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
     ///
     fn process_server_events(
         &mut self,
-        transports_notifier: UnboundedSender<TransportNotification>,
+        transports_notifier: UnboundedSender<TransportNotification<T>>,
     ) {
         let mut events_receiver = self.server_events_receiver.take().unwrap();
         tokio::spawn(async move {
@@ -356,7 +349,7 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
     /// * `payload` - Slice of bytes containing the request payload encoded with protobuf
     async fn handle_request(
         &self,
-        transport: Arc<dyn Transport + Send + Sync>,
+        transport: Arc<T>,
         message_identifier: u32,
         payload: Vec<u8>,
     ) -> ServerResult<()> {
@@ -467,7 +460,7 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
     /// * `payload` - Slice of bytes containing the request payload encoded with protobuf
     async fn handle_request_module(
         &mut self,
-        transport: Arc<dyn Transport + Send + Sync>,
+        transport: Arc<T>,
         message_identifier: u32,
         payload: Vec<u8>,
     ) -> ServerResult<()> {
@@ -517,7 +510,7 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
     /// * `payload` - Slice of bytes containing the request payload encoded with protobuf
     async fn handle_create_port(
         &mut self,
-        transport: Arc<dyn Transport + Send + Sync>,
+        transport: Arc<T>,
         message_identifier: u32,
         payload: Vec<u8>,
     ) -> ServerResult<()> {
@@ -571,11 +564,7 @@ impl<Context: Send + Sync + 'static> RpcServer<Context> {
     /// # Arguments
     ///
     /// * `payload` - Vec of bytes containing the request payload encoded with protobuf
-    async fn handle_message(
-        &mut self,
-        transport: Arc<dyn Transport + Send + Sync>,
-        payload: Vec<u8>,
-    ) -> ServerResult<()> {
+    async fn handle_message(&mut self, transport: Arc<T>, payload: Vec<u8>) -> ServerResult<()> {
         let (message_type, message_identifier) =
             parse_header(&payload).ok_or(ServerError::ProtocolError)?;
 
