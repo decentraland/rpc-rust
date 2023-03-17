@@ -46,6 +46,7 @@ impl RPCServiceGenerator {
 
     fn extract_input_token(&self, method: &Method) -> TokenStream {
         let input_type = if method.input_type.to_string().eq("()") {
+            // TODO: This is not working
             TokenStream::default() 
         } else {
             let input_type = format_ident!("{}", method.input_type);
@@ -61,6 +62,7 @@ impl RPCServiceGenerator {
 
     fn extract_output_token(&self, method: &Method) -> TokenStream {
         let output_type = if method.output_type.to_string().eq("()") {
+            // The unit type can not be casted to an Ident, so the empty token is needed
             TokenStream::default() 
         } else {
             let output_type = format_ident!("{}", method.output_type);
