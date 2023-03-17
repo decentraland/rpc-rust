@@ -32,20 +32,28 @@ impl RPCServiceGenerator {
     }
 
     fn method_sig_tokens(&self, method: &Method, params: MethodSigTokensParams) -> TokenStream {
-        let input_type = format_ident!("{}", method.input_type);
-        let input_type = if method.client_streaming {
-            let client_stream_request = self.client_stream_request();
-            quote!(#client_stream_request<#input_type>)
+        let input_type = if method.input_type.to_string().eq("()") {
+            quote! { () }
         } else {
-            quote!(#input_type)
+            let input_type = format_ident!("{}", method.input_type);
+            if method.client_streaming {
+                let client_stream_request = self.client_stream_request();
+                quote!(#client_stream_request<#input_type>)
+            } else {
+                quote!(#input_type)
+            }
         };
 
-        let output_type = format_ident!("{}", method.output_type);
-        let output_type = if method.server_streaming {
-            let server_stream_response = self.server_stream_response();
-            quote!(#server_stream_response<#output_type>)
+        let output_type = if method.output_type.to_string().eq("()") {
+            quote! { () } 
         } else {
-            quote!(#output_type)
+            let output_type = format_ident!("{}", method.output_type);
+            if method.server_streaming {
+                let server_stream_response = self.server_stream_response();
+                quote!(#server_stream_response<#output_type>)
+            } else {
+                quote!(#output_type)
+            }
         };
 
         let name = format_ident!("{}", method.name);

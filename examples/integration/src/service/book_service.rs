@@ -11,6 +11,11 @@ pub struct MyBookService {}
 
 #[async_trait::async_trait]
 impl SharedBookService<MyExampleContext> for MyBookService {
+
+    async fn send_book(&self, _book: Book, _ctx: Arc<MyExampleContext>) -> () {
+        // Do nothing as the db is mocked
+    }
+
     async fn get_book(&self, request: GetBookRequest, ctx: Arc<MyExampleContext>) -> Book {
         assert_eq!(ctx.hardcoded_database.len(), 5);
 
