@@ -1,6 +1,7 @@
 use integration::BookService;
 use integration::BookServiceClient;
 use integration::BookServiceRegistration;
+use std::sync::Arc;
 use std::{env, time::Duration};
 
 use dcl_rpc::{
@@ -100,6 +101,9 @@ async fn main() {
         } else if example == "ws" {
             println!("--- Running example with Web Socket Transports ---");
             run_ws_transport().await;
+        } else if example == "dyn" {
+            println!("--- Running example with &dyn Transport ---");
+            run_with_dyn_transport().await;
         }
         // TODO: fix QUIC transport (similar to ws fix)
         // } else if example == "quic" {
@@ -111,6 +115,8 @@ async fn main() {
         run_memory_transport().await;
         println!("--- Running example with Web Socket Transports ---");
         run_ws_transport().await;
+        println!("--- Running example with &dyn Transport ---");
+        run_with_dyn_transport().await;
         // TODO: fix QUIC transport (similar to ws fix)
         // println!("--- Running example with QUIC Transports ---");
         // run_with_transports(TransportType::QUIC).await;
@@ -141,7 +147,7 @@ async fn run_memory_transport() {
 
         // Not needed to use the server events sender it can be attached direcrly
         // Since it doesn't have to anything or wait anything in background
-        match server.attach_transport(server_transport) {
+        match server.attach_transport(Arc::new(server_transport)) {
             Ok(_) => {
                 println!("> RpcServer > first transport attached successfully");
             }
@@ -151,7 +157,7 @@ async fn run_memory_transport() {
             }
         }
 
-        match server.attach_transport(server_2_transport) {
+        match server.attach_transport(Arc::new(server_2_transport)) {
             Ok(_) => {
                 println!("> RpcServer > second transport attached successfully");
             }
@@ -217,7 +223,8 @@ async fn run_ws_transport() {
         tokio::spawn(async move {
             while let Some(Ok(connection)) = connection_listener.recv().await {
                 let transport = WebSocketTransport::new(connection);
-                match server_events_sender.send_attach_transport(transport) {
+                let transport_to_arc: Arc<dyn Transport> = Arc::new(transport);
+                match server_events_sender.send_attach_transport(transport_to_arc) {
                     Ok(_) => {
                         println!("> RpcServer > transport attached successfully");
                     }
@@ -243,8 +250,82 @@ async fn run_ws_transport() {
     }
 }
 
-async fn handle_client_connection<T: Transport + Send + Sync + 'static>(
-    (client_transport, client_2_transport): (T, T),
+/// This example wants to show you that it's possible to use multiple type of transports, we don't know if there is a real use case but it's possible.
+async fn run_with_dyn_transport() {
+    let ws_server = WebSocketServer::new("127.0.0.1:8080");
+
+    let mut connection_listener = ws_server.listen().await.unwrap();
+
+    let cancellation_token = CancellationToken::new();
+    // Another client to test multiple transports server feature
+    let cloned_token = cancellation_token.clone();
+
+    let (client_memory_transport, server_memory_transport) = MemoryTransport::create();
+
+    let client_handle = tokio::spawn(async move {
+        let client_connection = WebSocketClient::connect("ws://127.0.0.1:8080")
+            .await
+            .unwrap();
+
+        let client_transport = WebSocketTransport::new(client_connection);
+
+        handle_client_connection((client_transport, client_memory_transport)).await;
+
+        cloned_token.cancel();
+    });
+
+    let server_handle = tokio::spawn(async {
+        let ctx = MyExampleContext {
+            hardcoded_database: create_db(),
+        };
+
+        let mut server = RpcServer::create(ctx);
+        server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
+            BookServiceRegistration::register_service(port, book_service::MyBookService {})
+        });
+
+        // Cast Arc<> to use multiple transport types in the server
+        let server_memory_transport_to_arc: Arc<dyn Transport> = Arc::new(server_memory_transport);
+
+        server
+            .attach_transport(server_memory_transport_to_arc)
+            .unwrap();
+
+        // It has to use the server events sender to attach transport because it has to wait for client connections
+        // and keep waiting for new ones
+        let server_events_sender = server.get_server_events_sender();
+        tokio::spawn(async move {
+            while let Some(Ok(connection)) = connection_listener.recv().await {
+                let transport = WebSocketTransport::new(connection);
+                let transport_to_arc: Arc<dyn Transport> = Arc::new(transport);
+                match server_events_sender.send_attach_transport(transport_to_arc) {
+                    Ok(_) => {
+                        println!("> RpcServer > transport attached successfully");
+                    }
+                    Err(_) => {
+                        println!("> RpcServer > unable to attach transport");
+                        panic!()
+                    }
+                }
+            }
+        });
+
+        server.run().await;
+    });
+
+    client_handle.await.unwrap();
+    select! {
+        _ = cancellation_token.cancelled() => {
+            println!("Example finished manually")
+        },
+        _ =  server_handle => {
+            println!("Server terminated unexpectedly")
+        }
+    }
+}
+
+async fn handle_client_connection<T: Transport + 'static, T2: Transport + 'static>(
+    (client_transport, client_2_transport): (T, T2),
 ) {
     let mut client = RpcClient::new(client_transport).await.unwrap();
 
@@ -288,13 +369,13 @@ async fn handle_client_connection<T: Transport + Send + Sync + 'static>(
 
     println!("> Calling load module");
     let book_service_module = client_port
-        .load_module::<BookServiceClient>("BookService")
+        .load_module::<BookServiceClient<T>>("BookService")
         .await
         .unwrap();
 
     println!("> Calling load module for client 2");
     let book_service_module_2 = client_port_2
-        .load_module::<BookServiceClient>("BookService")
+        .load_module::<BookServiceClient<T2>>("BookService")
         .await
         .unwrap();
 

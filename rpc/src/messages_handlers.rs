@@ -55,9 +55,9 @@ impl ServerMessagesHandler {
     /// Receive a unary procedure handler returned future and process it in a spawned background task.
     ///
     /// This function aims to run the procedure handler in spawned task to achieve processing requests concurrently.
-    pub fn process_unary_request(
+    pub fn process_unary_request<T: Transport + ?Sized + 'static>(
         &self,
-        transport: Arc<dyn Transport + Send + Sync>,
+        transport: Arc<T>,
         message_identifier: u32,
         procedure_handler: UnaryResponse,
     ) {
@@ -78,9 +78,9 @@ impl ServerMessagesHandler {
     /// Receive a server streams procedure handler returned future and process it in a spawned background task.
     ///
     /// This function aims to run the procedure handler in spawned task to achieve processing requests concurrently.
-    pub fn process_server_streams_request(
+    pub fn process_server_streams_request<T: Transport + ?Sized + 'static>(
         self: Arc<Self>,
-        transport: Arc<dyn Transport + Send + Sync>,
+        transport: Arc<T>,
         message_identifier: u32,
         port_id: u32,
         procedure_handler: ServerStreamsResponse,
@@ -105,9 +105,9 @@ impl ServerMessagesHandler {
     /// Receive a client streams procedure handler returned future and process it in a spawned background task.
     ///
     /// This function aims to run the procedure handler in spawned task to achieve processing requests concurrently.
-    pub fn process_client_streams_request(
+    pub fn process_client_streams_request<T: Transport + ?Sized + 'static>(
         self: Arc<Self>,
-        transport: Arc<dyn Transport + Send + Sync>,
+        transport: Arc<T>,
         message_identifier: u32,
         client_stream_id: u32,
         procedure_handler: ClientStreamsResponse,
@@ -124,9 +124,9 @@ impl ServerMessagesHandler {
     /// Receive a bidirectional streams procedure handler returned future and process it in a spawned background task.
     ///
     /// This function aims to run the procedure handler in spawned task to achieve processing requests concurrently.
-    pub fn process_bidir_streams_request(
+    pub fn process_bidir_streams_request<T: Transport + ?Sized + 'static>(
         self: Arc<Self>,
-        transport: Arc<dyn Transport + Send + Sync>,
+        transport: Arc<T>,
         message_identifier: u32,
         port_id: u32,
         client_stream_id: u32,
@@ -172,9 +172,9 @@ impl ServerMessagesHandler {
     }
 
     /// Sends a common response [`Response`] through the given transport
-    pub async fn send_response(
+    pub async fn send_response<T: Transport + ?Sized>(
         &self,
-        transport: Arc<dyn Transport + Send + Sync>,
+        transport: Arc<T>,
         message_identifier: u32,
         payload: Vec<u8>,
     ) {
@@ -190,9 +190,9 @@ impl ServerMessagesHandler {
     }
 
     /// Sends a [`StreamMessage`] in order to open the stream on the other half
-    async fn open_server_stream(
+    async fn open_server_stream<T: Transport + ?Sized>(
         &self,
-        transport: Arc<dyn Transport + Send + Sync>,
+        transport: Arc<T>,
         message_identifier: u32,
         port_id: u32,
     ) -> ServerResult<OneShotReceiver<Vec<u8>>> {
@@ -239,9 +239,9 @@ type StreamPackage = (RpcMessageTypes, u32, StreamMessage);
 /// It's the data structure that actually owns the Transport attached to a `RpcClient`. The transport is drilled down up to get to `ClientMEssagesHandler`
 ///
 ///
-pub struct ClientMessagesHandler {
+pub struct ClientMessagesHandler<T: Transport + ?Sized> {
     /// Transport received by a `RpcClient`
-    pub transport: Arc<dyn Transport + Send + Sync>,
+    pub transport: Arc<T>,
     /// Data structure in charge of handling all messages related to streams
     pub streams_handler: Arc<StreamsHandler>,
     /// One time listeners for responses.
@@ -271,8 +271,8 @@ pub struct ClientMessagesHandler {
     process_cancellation_token: CancellationToken,
 }
 
-impl ClientMessagesHandler {
-    pub fn new(transport: Arc<dyn Transport + Send + Sync>) -> Self {
+impl<T: Transport + ?Sized + 'static> ClientMessagesHandler<T> {
+    pub fn new(transport: Arc<T>) -> Self {
         Self {
             transport,
             one_time_listeners: Mutex::new(HashMap::new()),
@@ -444,9 +444,9 @@ impl StreamsHandler {
     }
 
     /// It sends a message through the given `transport` in the parameter to close an opened stream procedure
-    async fn close_stream(
+    async fn close_stream<T: Transport + ?Sized>(
         &self,
-        transport: Arc<dyn Transport + Send + Sync>,
+        transport: Arc<T>,
         sequence_id: u32,
         message_identifier: u32,
         port_id: u32,
@@ -477,9 +477,9 @@ impl StreamsHandler {
     ///
     /// Also, it stops the generator and break the loop if the other half closed the stream. Otherwise, it will close the strram when the `stream_generator` doesn't have more messages.
     ///
-    pub async fn send_stream_through_transport(
+    pub async fn send_stream_through_transport<T: Transport + ?Sized>(
         &self,
-        transport: Arc<dyn Transport + Send + Sync>,
+        transport: Arc<T>,
         mut stream_generator: Generator<Vec<u8>>,
         port_id: u32,
         message_identifier: u32,
@@ -534,9 +534,9 @@ impl StreamsHandler {
     }
 
     /// Sends a [`StreamMessage`] through the given transport and registers the created acknowledge listener for the sent message and return it.
-    async fn send_stream(
+    async fn send_stream<T: Transport + ?Sized>(
         &self,
-        transport: Arc<dyn Transport + Send + Sync>,
+        transport: Arc<T>,
         message: StreamMessage,
     ) -> ServerResult<OneShotReceiver<Vec<u8>>> {
         let (_, message_id) = parse_message_identifier(message.message_identifier);

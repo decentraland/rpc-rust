@@ -22,7 +22,7 @@ use crate::{
 ///
 /// And it should be used to consume the stream messages when a stream procedure is executed
 ///
-pub struct StreamProtocol {
+pub struct StreamProtocol<T: Transport + ?Sized> {
     /// the ID of Port
     port_id: u32,
     /// ID of the message that inited the streaming
@@ -41,17 +41,13 @@ pub struct StreamProtocol {
     ///
     generator: (Generator<Vec<u8>>, GeneratorYielder<Vec<u8>>),
     /// The transport used for the communications
-    transport: Arc<dyn Transport + Send + Sync>,
+    transport: Arc<T>,
     /// Cancellation token to cancel the background task listening for new messages
     process_cancellation_token: CancellationToken,
 }
 
-impl StreamProtocol {
-    pub(crate) fn new(
-        transport: Arc<dyn Transport + Send + Sync>,
-        port_id: u32,
-        message_number: u32,
-    ) -> Self {
+impl<T: Transport + ?Sized + 'static> StreamProtocol<T> {
+    pub(crate) fn new(transport: Arc<T>, port_id: u32, message_number: u32) -> Self {
         Self {
             last_received_sequence_id: 0,
             is_remote_closed: false,

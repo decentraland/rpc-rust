@@ -33,7 +33,7 @@ pub enum TransportError {
 }
 
 #[async_trait]
-pub trait Transport {
+pub trait Transport: Send + Sync {
     async fn receive(&self) -> Result<TransportEvent, TransportError>;
     async fn send(&self, message: Vec<u8>) -> Result<(), TransportError>;
     async fn close(&self);

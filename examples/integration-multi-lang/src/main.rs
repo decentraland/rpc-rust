@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use dcl_rpc::{
     server::{RpcServer, RpcServerPort},
     transports::web_socket::{WebSocketServer, WebSocketTransport},
@@ -66,7 +68,8 @@ async fn run_ws_example() {
     tokio::spawn(async move {
         while let Some(Ok(connection)) = connection_listener.recv().await {
             let transport = WebSocketTransport::new(connection);
-            match server_events_sender.send_attach_transport(transport) {
+            let transport_to_arc = Arc::new(transport);
+            match server_events_sender.send_attach_transport(transport_to_arc) {
                 Ok(_) => {
                     println!("> RpcServer > transport attached successfully");
                 }
