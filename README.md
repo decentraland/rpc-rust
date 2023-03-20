@@ -40,21 +40,23 @@ sudo apt-get install protobuf-compiler
 cargo install just
 ```
 
-## Build
-
-`cargo build`
-
 ## Examples
 
-### Run the integration example: RPC Client in Rust and RPC Server in Rust running Websocket transport example, Memory Transport example and example using different types of transports
+### Run the integration example
+
+RPC Client in Rust and RPC Server in Rust running Websocket transport example, Memory Transport example and example using different types of transports
 
 `just run-integration`
 
-### Run the integration example with an specific transport: RPC Client in Rust and RPC Server in Rust running the example passed to the command
+### Run the integration example with an specific transport 
+
+RPC Client in Rust and RPC Server in Rust running the example passed to the command
 
 `just run-integration {ws|memory|dyn}`
 
-### Run the multi language integration example: RPC Client in Typescript and RPC Server in Rust using WebSockets
+### Run the multi language integration example 
+
+RPC Client in Typescript and RPC Server in Rust using WebSockets
 
 `just run-multilang`
 
