@@ -5,7 +5,7 @@ use dcl_rpc::{
     transports::web_socket::{WebSocketServer, WebSocketTransport},
 };
 use integration_multi_lang::{
-    codegen::server::BookServiceCodeGen, service::book_service, Book, MyExampleContext,
+    service::book_service, Book, BookServiceRegistration, MyExampleContext,
 };
 
 fn create_db() -> Vec<Book> {
@@ -61,7 +61,7 @@ async fn run_ws_example() {
 
     let mut server = RpcServer::create(ctx);
     server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
-        BookServiceCodeGen::register_service(port, book_service::BookService {})
+        BookServiceRegistration::register_service(port, book_service::BookService {})
     });
 
     let server_events_sender = server.get_server_events_sender();

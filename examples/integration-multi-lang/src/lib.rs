@@ -1,4 +1,3 @@
-pub mod codegen;
 pub mod service;
 include!(concat!(env!("OUT_DIR"), "/_.rs"));
 
