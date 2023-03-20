@@ -46,8 +46,7 @@ impl RPCServiceGenerator {
 
     fn extract_input_token(&self, method: &Method) -> TokenStream {
         if method.input_type.to_string().eq("()") {
-            // TODO: This is not working
-            TokenStream::default() 
+            quote!{ () } 
         } else {
             let input_type = format_ident!("{}", method.input_type);
             match method.client_streaming {
