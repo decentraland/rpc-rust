@@ -50,11 +50,12 @@ impl RPCServiceGenerator {
             TokenStream::default() 
         } else {
             let input_type = format_ident!("{}", method.input_type);
-            if method.client_streaming {
-                let client_stream_request = self.client_stream_request();
-                quote!(#client_stream_request<#input_type>)
-            } else {
-                quote!(#input_type)
+            match method.client_streaming {
+                true => {
+                    let client_stream_request = self.client_stream_request();
+                    quote!(#client_stream_request<#input_type>)
+                }
+                false => quote!(#input_type)
             }
         }
     }
@@ -65,11 +66,12 @@ impl RPCServiceGenerator {
             TokenStream::default() 
         } else {
             let output_type = format_ident!("{}", method.output_type);
-            if method.server_streaming {
-                let server_stream_response = self.server_stream_response();
-                quote! {-> #server_stream_response<#output_type>}
-            } else {
-                quote! {-> #output_type}
+            match method.server_streaming {
+                true => {
+                    let server_stream_response = self.server_stream_response();
+                    quote! {-> #server_stream_response<#output_type>}
+                }
+                false => quote! {-> #output_type}
             }
         }
     }
