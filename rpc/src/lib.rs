@@ -21,6 +21,7 @@
 //!
 
 pub mod client;
+pub mod codegen;
 pub mod messages_handlers;
 pub mod rpc_protocol;
 pub mod server;
