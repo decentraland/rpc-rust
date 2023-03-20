@@ -70,7 +70,7 @@ dcl-rpc = "*"
 
 [build-dependencies]
 prost-build = "*"
-dcl-rpc = "*" # As a build depency as well because we need to the codegen module for the code-generation of the defined RPC Service in the .proto
+dcl-rpc = "*" # As a build depency as well because we need the codegen module for the code-generation of the defined RPC Service in the .proto
 ```
 
 ### Protobuf
