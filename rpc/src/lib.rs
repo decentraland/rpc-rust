@@ -17,7 +17,7 @@
 //!
 //! The `RpcServer` shares a context through all its registered modules. This context should have the app context, like a database connection/component. Every procedure can access and use the server context, and the same instance of the context is shared between them (`Arc<Context>`).
 //!
-//! You could find basic and complex examples in the "examples" folder on the github repository.
+//! You could find basic and complex examples in the [examples folder](https://github.com/decentraland/rpc-rust/tree/main/examples) on the [github repository](https://github.com/decentraland/rpc-rust).
 //!
 
 pub mod client;
