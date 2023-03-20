@@ -4,8 +4,6 @@ pub mod service;
 pub mod setup_quic;
 include!(concat!(env!("OUT_DIR"), "/_.rs"));
 
-pub struct BookContext {
-    pub hardcoded_database: Vec<Book>,
+pub struct MyExampleContext {
+    pub hardcoded_database: RwLock<Vec<Book>>,
 }
-
-pub type MyExampleContext = RwLock<BookContext>;

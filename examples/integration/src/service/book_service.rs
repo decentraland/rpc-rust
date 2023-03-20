@@ -25,8 +25,8 @@ impl SharedBookService<MyExampleContext> for MyBookService {
     }
 
     async fn get_book(&self, request: GetBookRequest, ctx: Arc<MyExampleContext>) -> Book {
-        let context = ctx.read().await;
-        let books = (*context).hardcoded_database;
+        let context = ctx.hardcoded_database.read().await;
+        let books = *context;
 
         // Simulate DB operation
         println!(
@@ -50,8 +50,8 @@ impl SharedBookService<MyExampleContext> for MyBookService {
         request: QueryBooksRequest,
         ctx: Arc<MyExampleContext>,
     ) -> ServerStreamResponse<Book> {
-        let context = ctx.read().await;
-        let books = (*context).hardcoded_database;
+        let context = ctx.hardcoded_database.read().await;
+        let books = *context;
 
         println!("> BookService > server stream > QueryBooks");
         let (generator, generator_yielder) = Generator::create();
@@ -73,8 +73,8 @@ impl SharedBookService<MyExampleContext> for MyBookService {
         mut request: ClientStreamRequest<GetBookRequest>,
         ctx: Arc<MyExampleContext>,
     ) -> Book {
-        let context = ctx.read().await;
-        let books = (*context).hardcoded_database;
+        let context = ctx.hardcoded_database.read().await;
+        let books = *context;
 
         while request.next().await.is_some() {}
 
@@ -86,8 +86,8 @@ impl SharedBookService<MyExampleContext> for MyBookService {
         mut request: ClientStreamRequest<GetBookRequest>,
         ctx: Arc<MyExampleContext>,
     ) -> ServerStreamResponse<Book> {
-        let context = ctx.read().await;
-        let books = (*context).hardcoded_database;
+        let context = ctx.hardcoded_database.read().await;
+        let books = *context;
 
         println!("> BookService > bidir stream > QueryBooksStream");
         let (generator, generator_yielder) = Generator::create();
