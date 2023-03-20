@@ -12,7 +12,6 @@ use quote::{format_ident, quote};
 #[derive(Default)]
 pub struct RPCServiceGenerator {}
 
-
 pub struct MethodSigTokensParams {
     body: Option<TokenStream>,
     with_context: bool,
@@ -37,32 +36,39 @@ impl RPCServiceGenerator {
         let name = extract_name_token(method);
         let context = extract_context_token(&params);
         let body = extract_body_token(params);
-        
-        quote! {
-            async fn #name(&self, request: #input_type #context)
-                #output_type #body
+
+        if let Some(input_type) = input_type {
+            quote! {
+                async fn #name(&self, request: #input_type #context)
+                    #output_type #body
+            }
+        } else {
+            quote! {
+                async fn #name(&self #context)
+                    #output_type #body
+            }
         }
     }
 
-    fn extract_input_token(&self, method: &Method) -> TokenStream {
+    fn extract_input_token(&self, method: &Method) -> Option<TokenStream> {
         if method.input_type.to_string().eq("()") {
-            quote!{ () } 
+            None
         } else {
             let input_type = format_ident!("{}", method.input_type);
-            match method.client_streaming {
+            Some(match method.client_streaming {
                 true => {
                     let client_stream_request = self.client_stream_request();
                     quote!(#client_stream_request<#input_type>)
                 }
-                false => quote!(#input_type)
-            }
+                false => quote!(#input_type),
+            })
         }
     }
 
     fn extract_output_token(&self, method: &Method) -> TokenStream {
         if method.output_type.to_string().eq("()") {
             // The unit type can not be casted to an Ident, so the empty token is needed
-            TokenStream::default() 
+            TokenStream::default()
         } else {
             let output_type = format_ident!("{}", method.output_type);
             match method.server_streaming {
@@ -70,7 +76,7 @@ impl RPCServiceGenerator {
                     let server_stream_response = self.server_stream_response();
                     quote! {-> #server_stream_response<#output_type>}
                 }
-                false => quote! {-> #output_type}
+                false => quote! {-> #output_type},
             }
         }
     }
@@ -99,7 +105,16 @@ impl RPCServiceGenerator {
         for method in service.methods.iter() {
             buf.push('\n');
             method.comments.append_with_indent(1, buf);
-            buf.push_str(&format!("    {};\n", self.method_sig_tokens(method, MethodSigTokensParams{ body: None, with_context: false })));
+            buf.push_str(&format!(
+                "    {};\n",
+                self.method_sig_tokens(
+                    method,
+                    MethodSigTokensParams {
+                        body: None,
+                        with_context: false
+                    }
+                )
+            ));
         }
         buf.push_str("}\n");
     }
@@ -125,7 +140,13 @@ impl RPCServiceGenerator {
             method.comments.append_with_indent(1, buf);
             buf.push_str(&format!(
                 "    {};\n",
-                self.method_sig_tokens(method, MethodSigTokensParams{ body: None, with_context: true })
+                self.method_sig_tokens(
+                    method,
+                    MethodSigTokensParams {
+                        body: None,
+                        with_context: true
+                    }
+                )
             ));
         }
         buf.push_str("}\n");
@@ -168,51 +189,88 @@ impl RPCServiceGenerator {
         for method in service.methods.iter() {
             buf.push('\n');
             method.comments.append_with_indent(1, buf);
+            let input_type = self.extract_input_token(method);
+            let append_request = input_type.is_some();
             let body = match (method.client_streaming, method.server_streaming) {
-                (false, false) => self.generate_unary_call(&method.proto_name),
-                (false, true) => self.generate_server_streams_procedure(&method.proto_name),
-                (true, false) => self.generate_client_streams_procedure(&method.proto_name),
-                (true, true) => self.generate_bidir_streams_procedure(&method.proto_name),
+                (false, false) => self.generate_unary_call(&method.proto_name, append_request),
+                (false, true) => {
+                    self.generate_server_streams_procedure(&method.proto_name, append_request)
+                }
+                (true, false) => {
+                    self.generate_client_streams_procedure(&method.proto_name, append_request)
+                }
+                (true, true) => {
+                    self.generate_bidir_streams_procedure(&method.proto_name, append_request)
+                }
             };
             buf.push_str(&format!(
                 "    {}\n",
-                self.method_sig_tokens(method, MethodSigTokensParams{ body:  Some(body), with_context: false })
+                self.method_sig_tokens(
+                    method,
+                    MethodSigTokensParams {
+                        body: Some(body),
+                        with_context: false
+                    }
+                )
             ));
         }
         buf.push_str("}\n");
     }
 
-    fn generate_unary_call(&self, name: &str) -> TokenStream {
+    fn generate_unary_call(&self, name: &str, append_request: bool) -> TokenStream {
+        let request = if append_request {
+            quote!(request)
+        } else {
+            quote! { () }
+        };
         quote! {
             self.rpc_client_module
-                .call_unary_procedure(#name, request)
+                .call_unary_procedure(#name, #request)
                 .await
                 .unwrap()
         }
     }
 
-    fn generate_server_streams_procedure(&self, name: &str) -> TokenStream {
+    fn generate_server_streams_procedure(&self, name: &str, append_request: bool) -> TokenStream {
+        let request = if append_request {
+            quote!(request)
+        } else {
+            quote! { () }
+        };
+
         quote! {
             self.rpc_client_module
-                .call_server_streams_procedure(#name, request)
+                .call_server_streams_procedure(#name, #request)
                 .await
                 .unwrap()
         }
     }
 
-    fn generate_client_streams_procedure(&self, name: &str) -> TokenStream {
+    fn generate_client_streams_procedure(&self, name: &str, append_request: bool) -> TokenStream {
+        let request = if append_request {
+            quote!(request)
+        } else {
+            quote! { () }
+        };
+
         quote! {
             self.rpc_client_module
-                .call_client_streams_procedure(#name, request)
+                .call_client_streams_procedure(#name, #request)
                 .await
                 .unwrap()
         }
     }
 
-    fn generate_bidir_streams_procedure(&self, name: &str) -> TokenStream {
+    fn generate_bidir_streams_procedure(&self, name: &str, append_request: bool) -> TokenStream {
+        let request = if append_request {
+            quote!(request)
+        } else {
+            quote! { () }
+        };
+
         quote! {
             self.rpc_client_module
-                .call_bidir_streams_procedure(#name, request)
+                .call_bidir_streams_procedure(#name, #request)
                 .await
                 .unwrap()
         }
@@ -270,15 +328,20 @@ impl RPCServiceGenerator {
     fn generate_add_unary_call(&self, method: &Method) -> TokenStream {
         let method_name: TokenStream = method.name.parse().unwrap();
         let proto_method_name = &method.proto_name;
-        let input_type: TokenStream = method.input_type.parse().unwrap();
+        let input_type = self.extract_input_token(method);
+        let service_call = if let Some(input_type) = input_type {
+            quote! {
+                service.#method_name(#input_type::decode(request.as_slice()).unwrap(), context).await
+            }
+        } else {
+            quote! { service.#method_name(context).await }
+        };
         quote! {
             let service = Arc::clone(&shareable_service);
             service_def.add_unary(#proto_method_name, move |request, context| {
                 let service = service.clone();
                 Box::pin(async move {
-                    let response = service
-                        .#method_name(#input_type::decode(request.as_slice()).unwrap(), context)
-                        .await;
+                    let response = #service_call;
                     response.encode_to_vec()
                 })
             });
@@ -289,14 +352,24 @@ impl RPCServiceGenerator {
         let method_name: TokenStream = method.name.parse().unwrap();
         let proto_method_name = &method.proto_name;
         let input_type: TokenStream = method.input_type.parse().unwrap();
+        let extracted_input_type = self.extract_input_token(method);
+
+        let service_stream = if extracted_input_type.is_some() {
+            quote! {
+                service.#method_name(#input_type::decode(request.as_slice()).unwrap(), context).await
+            }
+        } else {
+            quote! {
+                service.#method_name(context).await;
+            }
+        };
+
         quote! {
             let service = Arc::clone(&shareable_service);
             service_def.add_server_streams(#proto_method_name, move |request, context| {
                 let service = service.clone();
                 Box::pin(async move {
-                    let server_streams = service
-                        .#method_name(#input_type::decode(request.as_slice()).unwrap(), context)
-                        .await;
+                    let server_streams = #service_stream;
                     // Transforming and filling the new generator is spawned so the response is quick
                     Generator::from_generator(server_streams, |item| item.encode_to_vec())
                 })
@@ -308,13 +381,22 @@ impl RPCServiceGenerator {
         let method_name: TokenStream = method.name.parse().unwrap();
         let proto_method_name = &method.proto_name;
         let input_type: TokenStream = method.input_type.parse().unwrap();
+        let extracted_input_type = self.extract_input_token(method);
+
+        let input = if extracted_input_type.is_some() {
+            quote! {
+                #input_type::decode(item.as_slice()).unwrap()
+            }
+        } else {
+            quote! { () }
+        };
         quote! {
             let service = Arc::clone(&shareable_service);
             service_def.add_client_streams(#proto_method_name, move |request, context| {
                 let service = service.clone();
                 Box::pin(async move {
                     let generator = Generator::from_generator(request, |item| {
-                        #input_type::decode(item.as_slice()).unwrap()
+                        #input
                     });
 
                     let response = service.#method_name(generator, context).await;
@@ -328,13 +410,22 @@ impl RPCServiceGenerator {
         let method_name: TokenStream = method.name.parse().unwrap();
         let proto_method_name = &method.proto_name;
         let input_type: TokenStream = method.input_type.parse().unwrap();
+        let extracted_input_type = self.extract_input_token(method);
+        let input = if extracted_input_type.is_some() {
+            quote! {
+                #input_type::decode(item.as_slice()).unwrap()
+            }
+        } else {
+            quote! { () }
+        };
+
         quote! {
             let service = Arc::clone(&shareable_service);
             service_def.add_bidir_streams(#proto_method_name, move |request, context| {
                 let service = service.clone();
                 Box::pin(async move {
                     let generator = Generator::from_generator(request, |item| {
-                        #input_type::decode(item.as_slice()).unwrap()
+                        #input
                     });
 
                     let response = service.#method_name(generator, context).await;

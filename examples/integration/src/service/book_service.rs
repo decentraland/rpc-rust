@@ -11,9 +11,17 @@ pub struct MyBookService {}
 
 #[async_trait::async_trait]
 impl SharedBookService<MyExampleContext> for MyBookService {
-
     async fn send_book(&self, _book: Book, _ctx: Arc<MyExampleContext>) {
-        // Do nothing as the db is mocked
+        // TODO
+    }
+
+    async fn get_latest_book(&self, _ctx: Arc<MyExampleContext>) -> Book {
+        // TODO
+        Book {
+            author: "mr jobs".to_string(),
+            title: "Rust: how do futures work under the hood?".to_string(),
+            isbn: 1001,
+        }
     }
 
     async fn get_book(&self, request: GetBookRequest, ctx: Arc<MyExampleContext>) -> Book {
