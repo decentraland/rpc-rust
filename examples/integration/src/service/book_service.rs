@@ -1,6 +1,6 @@
 use crate::{
-    Book, ClientStreamRequest, GetBookRequest, MyExampleContext, QueryBooksRequest,
-    ServerStreamResponse, SharedBookService,
+    Book, BookServiceServer, ClientStreamRequest, GetBookRequest, MyExampleContext,
+    QueryBooksRequest, ServerStreamResponse,
 };
 use std::{sync::Arc, time::Duration};
 
@@ -10,7 +10,7 @@ use tokio::time::sleep;
 pub struct MyBookService {}
 
 #[async_trait::async_trait]
-impl SharedBookService<MyExampleContext> for MyBookService {
+impl BookServiceServer<MyExampleContext> for MyBookService {
     async fn send_book(&self, book: Book, ctx: Arc<MyExampleContext>) {
         let mut books = ctx.hardcoded_database.write().await;
 
@@ -20,7 +20,7 @@ impl SharedBookService<MyExampleContext> for MyBookService {
             book.isbn
         );
         sleep(Duration::from_secs(2)).await;
-        
+
         books.push(book);
     }
 
@@ -57,7 +57,6 @@ impl SharedBookService<MyExampleContext> for MyBookService {
         request: QueryBooksRequest,
         ctx: Arc<MyExampleContext>,
     ) -> ServerStreamResponse<Book> {
-
         println!("> BookService > server stream > QueryBooks");
         let (generator, generator_yielder) = Generator::create();
         // Spawn for a quick response
@@ -91,16 +90,13 @@ impl SharedBookService<MyExampleContext> for MyBookService {
         mut request: ClientStreamRequest<GetBookRequest>,
         ctx: Arc<MyExampleContext>,
     ) -> ServerStreamResponse<Book> {
-
         println!("> BookService > bidir stream > QueryBooksStream");
         let (generator, generator_yielder) = Generator::create();
         // Spawn for a quick response
         tokio::spawn(async move {
             let books = ctx.hardcoded_database.read().await;
             while let Some(message) = request.next().await {
-                let book = books
-                    .iter()
-                    .find(|book| book.isbn == message.isbn);
+                let book = books.iter().find(|book| book.isbn == message.isbn);
                 if let Some(book) = book {
                     sleep(Duration::from_millis(500)).await; // Simulating DB
                     generator_yielder.r#yield(book.clone()).await.unwrap()

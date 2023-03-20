@@ -5,7 +5,8 @@ use async_trait::async_trait;
 
 use super::{Transport, TransportError, TransportEvent};
 
-/// MemoryTransport usually has no a use case in a real project (maybe if it's compiled to WASM and used in the browser).
+/// MemoryTransport has no common use case in a server or web app but it's great for testing propouses.
+/// However, this type of transport has an use case on Decentraland for the comms between Scenes<>BrowserInterface<>GameEngine.
 ///
 /// The most common use case is for testing. It uses [`async_channel`] internally
 ///
@@ -38,7 +39,9 @@ impl MemoryTransport {
         }
     }
 
-    /// It crates two [`MemoryTransport`]s for the both ends
+    /// It crates two [`MemoryTransport`]s for the both ends using [`async_channel::bounded`]
+    ///
+    /// The first element in the tuple is the transport for the [`crate::client::RpcClient`] and the second one for the [`crate::server::RpcServer`]
     pub fn create() -> (Self, Self) {
         let (client_sender, server_receiver) = bounded::<Vec<u8>>(32);
         let (server_sender, client_receiver) = bounded::<Vec<u8>>(32);

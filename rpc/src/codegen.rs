@@ -98,10 +98,7 @@ impl RPCServiceGenerator {
         service.comments.append_with_indent(0, buf);
 
         buf.push_str("#[async_trait::async_trait]\n");
-        buf.push_str(&format!(
-            "pub trait {}: Send + Sync + 'static {{",
-            service.name
-        ));
+        buf.push_str("pub trait RPCServiceClient: Send + Sync + 'static {");
         for method in service.methods.iter() {
             buf.push('\n');
             method.comments.append_with_indent(1, buf);
@@ -120,7 +117,7 @@ impl RPCServiceGenerator {
     }
 
     fn get_server_service_name(&self, service: &Service) -> String {
-        format!("Shared{}", service.name) // TODO: change shared prefix?
+        format!("{}Server", service.name)
     }
 
     fn generate_server_trait(&self, service: &Service, buf: &mut String) {
@@ -183,8 +180,8 @@ impl RPCServiceGenerator {
 
         buf.push_str("#[async_trait::async_trait]\n");
         buf.push_str(&format!(
-            "impl<T: Transport + 'static> {} for {}Client<T> {{",
-            service.name, service.name
+            "impl<T: Transport + 'static> RPCServiceClient for {}Client<T> {{",
+            service.name
         ));
         for method in service.methods.iter() {
             buf.push('\n');
