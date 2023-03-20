@@ -11,8 +11,29 @@ pub struct MyBookService {}
 
 #[async_trait::async_trait]
 impl SharedBookService<MyExampleContext> for MyBookService {
+    async fn send_book(&self, book: Book, ctx: Arc<MyExampleContext>) {
+        let mut books = ctx.hardcoded_database.write().await;
+
+        // Simulate DB operation
+        println!(
+            "> BookService > async send_book {} > simulating DB operation",
+            book.isbn
+        );
+        sleep(Duration::from_secs(2)).await;
+        
+        books.push(book);
+    }
+
+    async fn get_sample_book(&self, _ctx: Arc<MyExampleContext>) -> Book {
+        Book {
+            author: "mr jobs".to_string(),
+            title: "Rust: how do futures work under the hood?".to_string(),
+            isbn: 1001,
+        }
+    }
+
     async fn get_book(&self, request: GetBookRequest, ctx: Arc<MyExampleContext>) -> Book {
-        assert_eq!(ctx.hardcoded_database.len(), 5);
+        let books = ctx.hardcoded_database.read().await;
 
         // Simulate DB operation
         println!(
@@ -20,8 +41,7 @@ impl SharedBookService<MyExampleContext> for MyBookService {
             request.isbn
         );
         sleep(Duration::from_secs(2)).await;
-        let book = ctx
-            .hardcoded_database
+        let book = books
             .iter()
             .find(|book_record| book_record.isbn == request.isbn);
         println!(
@@ -37,11 +57,13 @@ impl SharedBookService<MyExampleContext> for MyBookService {
         request: QueryBooksRequest,
         ctx: Arc<MyExampleContext>,
     ) -> ServerStreamResponse<Book> {
+
         println!("> BookService > server stream > QueryBooks");
         let (generator, generator_yielder) = Generator::create();
         // Spawn for a quick response
         tokio::spawn(async move {
-            for book in &ctx.hardcoded_database {
+            let books = ctx.hardcoded_database.read().await;
+            for book in &*books {
                 sleep(Duration::from_secs(1)).await;
                 if book.author.contains(&request.author_prefix) {
                     generator_yielder.r#yield(book.clone()).await.unwrap();
@@ -57,9 +79,11 @@ impl SharedBookService<MyExampleContext> for MyBookService {
         mut request: ClientStreamRequest<GetBookRequest>,
         ctx: Arc<MyExampleContext>,
     ) -> Book {
+        let books = ctx.hardcoded_database.read().await;
+
         while request.next().await.is_some() {}
 
-        ctx.hardcoded_database[0].clone()
+        books[0].clone()
     }
 
     async fn query_books_stream(
@@ -67,13 +91,14 @@ impl SharedBookService<MyExampleContext> for MyBookService {
         mut request: ClientStreamRequest<GetBookRequest>,
         ctx: Arc<MyExampleContext>,
     ) -> ServerStreamResponse<Book> {
+
         println!("> BookService > bidir stream > QueryBooksStream");
         let (generator, generator_yielder) = Generator::create();
         // Spawn for a quick response
         tokio::spawn(async move {
+            let books = ctx.hardcoded_database.read().await;
             while let Some(message) = request.next().await {
-                let book = ctx
-                    .hardcoded_database
+                let book = books
                     .iter()
                     .find(|book| book.isbn == message.isbn);
                 if let Some(book) = book {

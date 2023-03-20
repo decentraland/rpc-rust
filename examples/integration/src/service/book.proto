@@ -1,5 +1,7 @@
 syntax = "proto3";
 
+import "google/protobuf/empty.proto";
+
 message Book {
   int64 isbn = 1;
   string title = 2;
@@ -15,6 +17,8 @@ message QueryBooksRequest {
 }
 
 service BookService {
+  rpc SendBook(Book) returns (google.protobuf.Empty) {}
+  rpc GetSampleBook(google.protobuf.Empty) returns (Book) {}
   rpc GetBook(GetBookRequest) returns (Book) {}
   rpc QueryBooks(QueryBooksRequest) returns (stream Book) {}
   rpc GetBookStream(stream GetBookRequest) returns (Book) {}

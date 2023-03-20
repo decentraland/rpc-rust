@@ -1,6 +1,7 @@
 use integration::BookService;
 use integration::BookServiceClient;
 use integration::BookServiceRegistration;
+use tokio::sync::RwLock;
 use std::sync::Arc;
 use std::{env, time::Duration};
 
@@ -137,7 +138,7 @@ async fn run_memory_transport() {
 
     let server_handle = tokio::spawn(async {
         let ctx = MyExampleContext {
-            hardcoded_database: create_db(),
+            hardcoded_database: RwLock::new(create_db()),
         };
 
         let mut server = RpcServer::create(ctx);
@@ -209,7 +210,7 @@ async fn run_ws_transport() {
 
     let server_handle = tokio::spawn(async {
         let ctx = MyExampleContext {
-            hardcoded_database: create_db(),
+            hardcoded_database: RwLock::new(create_db()),
         };
 
         let mut server = RpcServer::create(ctx);
@@ -276,7 +277,7 @@ async fn run_with_dyn_transport() {
 
     let server_handle = tokio::spawn(async {
         let ctx = MyExampleContext {
-            hardcoded_database: create_db(),
+            hardcoded_database: RwLock::new(create_db()),
         };
 
         let mut server = RpcServer::create(ctx);
