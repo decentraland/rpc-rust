@@ -14,11 +14,17 @@ impl SharedBookService<MyExampleContext> for MyBookService {
     async fn send_book(&self, book: Book, ctx: Arc<MyExampleContext>) {
         let mut books = ctx.hardcoded_database.write().await;
 
+        // Simulate DB operation
+        println!(
+            "> BookService > async send_book {} > simulating DB operation",
+            book.isbn
+        );
+        sleep(Duration::from_secs(2)).await;
+        
         books.push(book);
     }
 
-    async fn get_latest_book(&self, _ctx: Arc<MyExampleContext>) -> Book {
-        // TODO
+    async fn get_sample_book(&self, _ctx: Arc<MyExampleContext>) -> Book {
         Book {
             author: "mr jobs".to_string(),
             title: "Rust: how do futures work under the hood?".to_string(),

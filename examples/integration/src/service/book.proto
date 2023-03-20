@@ -18,7 +18,7 @@ message QueryBooksRequest {
 
 service BookService {
   rpc SendBook(Book) returns (google.protobuf.Empty) {}
-  rpc GetLatestBook(google.protobuf.Empty) returns (Book) {}
+  rpc GetSampleBook(google.protobuf.Empty) returns (Book) {}
   rpc GetBook(GetBookRequest) returns (Book) {}
   rpc QueryBooks(QueryBooksRequest) returns (stream Book) {}
   rpc GetBookStream(stream GetBookRequest) returns (Book) {}
