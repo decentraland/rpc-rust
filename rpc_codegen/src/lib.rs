@@ -329,16 +329,21 @@ impl RPCServiceGenerator {
         let method_name: TokenStream = method.name.parse().unwrap();
         let proto_method_name = &method.proto_name;
         let input_type = self.extract_input_token(method);
-        let service_call = if let Some(input_type) = input_type {
-            quote! {
+
+        let service_call;
+        let request;
+        if let Some(input_type) = input_type {
+            service_call = quote! {
                 service.#method_name(#input_type::decode(request.as_slice()).unwrap(), context).await
-            }
+            };
+            request = quote! {request}
         } else {
-            quote! { service.#method_name(context).await }
+            service_call = quote! { service.#method_name(context).await };
+            request = quote! {_request}
         };
         quote! {
             let service = Arc::clone(&shareable_service);
-            service_def.add_unary(#proto_method_name, move |request, context| {
+            service_def.add_unary(#proto_method_name, move |#request, context| {
                 let service = service.clone();
                 Box::pin(async move {
                     let response = #service_call;
@@ -354,19 +359,23 @@ impl RPCServiceGenerator {
         let input_type: TokenStream = method.input_type.parse().unwrap();
         let extracted_input_type = self.extract_input_token(method);
 
-        let service_stream = if extracted_input_type.is_some() {
-            quote! {
+        let service_stream;
+        let request;
+        if extracted_input_type.is_some() {
+            service_stream = quote! {
                 service.#method_name(#input_type::decode(request.as_slice()).unwrap(), context).await
-            }
+            };
+            request = quote! { request };
         } else {
-            quote! {
+            service_stream = quote! {
                 service.#method_name(context).await;
-            }
+            };
+            request = quote! { _request };
         };
 
         quote! {
             let service = Arc::clone(&shareable_service);
-            service_def.add_server_streams(#proto_method_name, move |request, context| {
+            service_def.add_server_streams(#proto_method_name, move |#request, context| {
                 let service = service.clone();
                 Box::pin(async move {
                     let server_streams = #service_stream;
@@ -383,16 +392,20 @@ impl RPCServiceGenerator {
         let input_type: TokenStream = method.input_type.parse().unwrap();
         let extracted_input_type = self.extract_input_token(method);
 
-        let input = if extracted_input_type.is_some() {
-            quote! {
+        let input;
+        let request;
+        if extracted_input_type.is_some() {
+            input = quote! {
                 #input_type::decode(item.as_slice()).unwrap()
-            }
+            };
+            request = quote! { request };
         } else {
-            quote! { () }
+            input = quote! { () };
+            request = quote! { _request };
         };
         quote! {
             let service = Arc::clone(&shareable_service);
-            service_def.add_client_streams(#proto_method_name, move |request, context| {
+            service_def.add_client_streams(#proto_method_name, move |#request, context| {
                 let service = service.clone();
                 Box::pin(async move {
                     let generator = Generator::from_generator(request, |item| {
@@ -411,17 +424,22 @@ impl RPCServiceGenerator {
         let proto_method_name = &method.proto_name;
         let input_type: TokenStream = method.input_type.parse().unwrap();
         let extracted_input_type = self.extract_input_token(method);
-        let input = if extracted_input_type.is_some() {
-            quote! {
+
+        let input;
+        let request;
+        if extracted_input_type.is_some() {
+            input = quote! {
                 #input_type::decode(item.as_slice()).unwrap()
-            }
+            };
+            request = quote! { request };
         } else {
-            quote! { () }
+            input = quote! { () };
+            request = quote! { _request };
         };
 
         quote! {
             let service = Arc::clone(&shareable_service);
-            service_def.add_bidir_streams(#proto_method_name, move |request, context| {
+            service_def.add_bidir_streams(#proto_method_name, move |#request, context| {
                 let service = service.clone();
                 Box::pin(async move {
                     let generator = Generator::from_generator(request, |item| {
