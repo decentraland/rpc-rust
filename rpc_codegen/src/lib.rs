@@ -350,19 +350,17 @@ fn extract_name_token(method: &Method) -> proc_macro2::Ident {
 }
 
 fn extract_context_token(params: &MethodSigTokensParams) -> TokenStream {
-    if params.with_context {
-        quote! {, context: Arc<Context>}
-    } else {
-        TokenStream::default()
+    match params.with_context {
+        true => quote! {, context: Arc<Context>},
+        false => TokenStream::default(),
     }
 }
 
 fn extract_body_token(params: MethodSigTokensParams) -> TokenStream {
     let body = params.body;
-    if let Some(body) = body {
-        quote! { { #body } }
-    } else {
-        TokenStream::default()
+    match body {
+        Some(body) => quote! { { #body } },
+        None => TokenStream::default(),
     }
 }
 
