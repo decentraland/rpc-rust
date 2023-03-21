@@ -3,7 +3,7 @@
 //! Communicates between different services written in different languages, just sharing a `.proto` file.
 //! Decentraland RPC implementation uses protobuffer as the messaging format and you can create custom transports (muest meet [trait][`crate::transports::Transport`] requirements) or use the existing ones for communication.
 //!
-//! The communication is carried out by a client (or many ones) and a server. A [`crate::client::RpcClient`] connects to a [`crate::server::RpcServer`]. A `RpcServer` accepts multiple clients.
+//! The communication is carried out by a client (or many ones) and a server. A [`RpcClient`](crate::client::RpcClient) connects to a [`RpcServer`](crate::server::RpcServer) . A `RpcServer` accepts multiple clients.
 //! For example, the `RpcServer` could have a WebSocket server listening for new connections for then [attaching][`crate::server::RpcServer::attach_transport`] each new connection socket to the `RpcServer`.
 //! And on the client side, a connection to the WebSocket server could be established for then creating a new `RpcClient` passing the connection socket generated.
 //!

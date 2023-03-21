@@ -1,4 +1,4 @@
-//! Generate service code from a service definition.
+//! Generate service code from a service definition in a `.proto` file.
 
 // Guidelines for generated code:
 //

@@ -1,3 +1,4 @@
+//! Parsing functions for the messages that are sent on communications between two different ends using the Decentraland RPC implementation.
 use prost::Message;
 
 use super::{RpcMessageHeader, RpcMessageTypes};

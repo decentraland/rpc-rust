@@ -1,3 +1,7 @@
+//! It contains the types that the [`RpcServer`](crate::server::RpcServer)  and [`RpcClient`](crate::client::RpcClient) use to handle messages (requests and reponses).
+//!
+//! Also, it contains the type [`StreamsHandler`] to handle streams. This type is used by both because they both receive and return StreamMessages
+//!
 use std::{collections::HashMap, sync::Arc};
 
 use log::{debug, error};
@@ -282,7 +286,7 @@ impl<T: Transport + ?Sized + 'static> ClientMessagesHandler<T> {
         }
     }
 
-    /// Starts a background task to listen responses from the [`crate::server::RpcServer`] sent to the transport.
+    /// Starts a background task to listen responses from the [`RpcServer`](crate::server::RpcServer)  sent to the transport.
     ///
     /// The receiver is an [`Arc<Self>`] in order to be able to process in a backgroun taks and mutate the state of the listeners
     ///
