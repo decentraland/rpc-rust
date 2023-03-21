@@ -430,7 +430,7 @@ impl<T: Transport + ?Sized + 'static> ClientMessagesHandler<T> {
     }
 }
 
-/// In charge of handling the acknowledge listener for Stream Messages so that it knows that it has to send the next [`StreamMessage`]
+/// In charge of handling the acknowledge listeners for Stream Messages so that it knows that it has to send the next [`StreamMessage`]
 #[derive(Default)]
 pub struct StreamsHandler {
     ack_listeners: Mutex<HashMap<String, OneShotSender<Vec<u8>>>>,
