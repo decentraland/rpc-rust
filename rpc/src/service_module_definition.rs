@@ -1,3 +1,8 @@
+//! It contains all the types related to the auto-codegeneration for a defined RPC service when a `.proto` is compiled.
+//!
+//! A [`ServiceModuleDefinition`] is auto-generated when a `.proto` is compiled. And it's filled with the defined procedures.
+//! Actually, you probably don't need to use this module or their types.
+//!
 use core::future::Future;
 use std::{collections::HashMap, pin::Pin, sync::Arc};
 

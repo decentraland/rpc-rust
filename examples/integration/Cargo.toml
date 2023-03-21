@@ -7,22 +7,23 @@ edition = "2021"
 
 [dependencies]
 dcl-rpc = { path = "../../rpc"}
-futures-channel.workspace = true
-tokio.workspace = true
-futures-util.workspace = true
-async-trait.workspace = true
-async-channel.workspace = true
-tokio-util.workspace = true
-tokio-tungstenite.workspace = true
-bytes.workspace = true
-prost.workspace = true
-quinn.workspace = true
-rustls.workspace = true
-rcgen.workspace = true
+futures-channel= { workspace = true }
+tokio= { workspace = true }
+futures-util= { workspace = true }
+async-trait= { workspace = true }
+async-channel= { workspace = true }
+tokio-util= { workspace = true }
+tokio-tungstenite= { workspace = true }
+bytes= { workspace = true }
+prost= { workspace = true }
+quinn= { workspace = true }
+rustls= { workspace = true }
+rcgen= { workspace = true }
 
 [build-dependencies]
 prost-build = "0.11.5"
-dcl-rpc-codegen = { path = "../../rpc_codegen" }
+dcl-rpc = { path = "../../rpc"}
+
 
 [[bin]]
 name = "integration"

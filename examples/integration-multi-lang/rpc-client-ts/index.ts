@@ -6,10 +6,13 @@ import { Book, BookServiceDefinition, GetBookRequest } from "./api";
 import expect from "expect";
 
 console.log("> Creating WebSocket client")
+// 1. Creates the websockect connection to the RpcServer in Rust
 let ws = new WebSocket('ws://127.0.0.1:8080');
+// 2. Turns connection into a Transport
 const clientSocket = WebSocketTransport(ws)
 
 console.log("> Creating RPC client")
+// 3. Creates the RpcClient
 const clientPromise = createRpcClient(clientSocket)
 
 async function* bookRequestGenerator() {
@@ -21,13 +24,17 @@ async function* bookRequestGenerator() {
   
 
 async function handleClientCreation() {
+  // 4. Awaits for the client to finally connect to the server.
   const client = await clientPromise
   console.log("  Client created!")
   console.log("> Creating client port")
+  // 5. Creates the port for the client.
   const clientPort = await client.createPort("my-port")
   console.log("> Requesting BookService client")
+  // 6. Loads the service from the RpcServer and receiving a client for the service.
   const clientBookService = loadService(clientPort, BookServiceDefinition)
 
+  // 7. Starts querying the Service
   console.log("> Unary > Invoking BookService.getBook(isbn:1001)")
   const response = await clientBookService.getBook({ isbn: 1001 })
   console.log("  Response: ", response)

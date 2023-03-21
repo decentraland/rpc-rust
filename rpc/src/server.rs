@@ -1,3 +1,5 @@
+//! This module contains all the types needed to have a running [`RpcServer`].
+//
 use std::{collections::HashMap, sync::Arc, u8};
 
 use log::{debug, error};

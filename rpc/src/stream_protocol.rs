@@ -1,3 +1,7 @@
+//! This contains all the types and logic needed when a stream procedure is opened in whatever of the two sides (client or server).
+//!
+//! It contains the [`Generator`] type used when a server or a client wants to consume the stream opened and its messages.
+//!
 use std::{future::Future, sync::Arc};
 
 use log::debug;
@@ -62,7 +66,7 @@ impl<T: Transport + ?Sized + 'static> StreamProtocol<T> {
 
     /// Get the next received stream message
     ///
-    /// It'll be sent by the [`GeneratorYielder`] but actually the message comes from the other half ([`crate::server::RpcServer`] or [`crate::client::RpcClient`] )
+    /// It'll be sent by the [`GeneratorYielder`] but actually the message comes from the other half ([`RpcServer`](crate::server::RpcServer)  or [`RpcClient`](crate::client::RpcClient) )
     ///
     /// You won't use this function direcly, you should turn the [`StreamProtocol`] into a [`Generator`] using [`to_generator`](#method.to_generator)
     ///
@@ -154,7 +158,7 @@ impl<T: Transport + ?Sized + 'static> StreamProtocol<T> {
 
     /// Spawns a background task to start processing the stream messages and returns a listener ([`AsyncChannelSender`])
     ///
-    /// The returned listener will be registered in [`crate::messages_handlers::ServerMessagesHandler`] or [`crate::messages_handlers::ClientMessagesHandler`] that the [`crate::server::RpcServer`] and [`crate::client::RpcClient`] contains
+    /// The returned listener will be registered in [`crate::messages_handlers::ServerMessagesHandler`] or [`crate::messages_handlers::ClientMessagesHandler`] that the [`RpcServer`](crate::server::RpcServer)  and [`RpcClient`](crate::client::RpcClient) contains
     ///
     /// Each new message that either of both structs receives will be handled by the messages handler and sent to the returned listener if it corresponds
     ///

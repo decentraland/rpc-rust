@@ -1,3 +1,4 @@
+//! QUIC as the wire between an [`RpcServer`](crate::server::RpcServer)  and a [`RpcClient`](crate::client::RpcClient).
 use std::{
     net::SocketAddr,
     sync::atomic::{AtomicBool, Ordering},

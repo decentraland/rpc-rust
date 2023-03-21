@@ -1,3 +1,6 @@
+//! Websockets as the wire between an [`RpcServer`](crate::server::RpcServer) and a [`RpcClient`](crate::client::RpcClient).
+//!
+//! This let the user get the most out of the advantages of using Decentraland RPC.
 use futures_util::{
     stream::{SplitSink, SplitStream},
     SinkExt, StreamExt, TryStreamExt,
@@ -38,7 +41,7 @@ pub struct WebSocketServer {
 
 /// Receiver half of a channel to get notified that there is a new connection
 ///
-/// And then attach turn the connection into a transport and attach it to the [`crate::server::RpcServer`]
+/// And then attach turn the connection into a transport and attach it to the [`RpcServer`](crate::server::RpcServer)
 ///
 type OnConnectionListener = UnboundedReceiver<Result<Socket, TransportError>>;
 
@@ -52,7 +55,7 @@ impl WebSocketServer {
 
     /// Listen for new connections on the address given and do the websocket handshake in a background task
     ///
-    /// Each new connection will be sent through the `OnConnectionListener`, in order to be attached to the [`crate::server::RpcServer`] as a [`WebSocketTransport`]
+    /// Each new connection will be sent through the `OnConnectionListener`, in order to be attached to the [`RpcServer`](crate::server::RpcServer)  as a [`WebSocketTransport`]
     ///
     pub async fn listen(&self) -> Result<OnConnectionListener, TransportError> {
         // listen to given address
@@ -117,7 +120,7 @@ pub struct WebSocketClient;
 impl WebSocketClient {
     /// Connect to a websocket server and returns a [`WebSocketStream`] if all went OK or a [`TransportError`] if there was a error on establishing the connection
     ///
-    /// If all went OK, and the [`WebSocketStream`] is returned, it should be turned into a [`WebSocketTransport`] to be attached to the [`crate::client::RpcClient`]
+    /// If all went OK, and the [`WebSocketStream`] is returned, it should be turned into a [`WebSocketTransport`] to be attached to the [`RpcClient`](crate::client::RpcClient)
     ///
     pub async fn connect(
         host: &str,
@@ -130,9 +133,9 @@ impl WebSocketClient {
 
 /// Transport to be used when there is a websocket server listening for new connections.
 ///
-/// Each new connection received from [`WebSocketServer`] should be passed to a [`WebSocketTransport`](#method.WebSocketTransport.new) and then the new [`WebSocketTransport`] should be attached to the [`crate::server::RpcServer`]
+/// Each new connection received from [`WebSocketServer`] should be passed to a [`WebSocketTransport`](#method.WebSocketTransport.new) and then the new [`WebSocketTransport`] should be attached to the [`RpcServer`](crate::server::RpcServer)
 ///
-/// Or a each new connection to a websocket server through [`WebSocketClient`] should be passed to a [`WebSocketTransport`](#method.WebSocketTransport.new) a passed to [`crate::client::RpcClient`] constructor
+/// Or a each new connection to a websocket server through [`WebSocketClient`] should be passed to a [`WebSocketTransport`](#method.WebSocketTransport.new) a passed to [`RpcClient`](crate::client::RpcClient) constructor
 ///
 pub struct WebSocketTransport {
     /// The read stream half of the [`WebSocketStream`]

@@ -23,6 +23,9 @@ tokio-tungstenite = "0.18.0"
 tokio-util = "0.7.4"
 quinn = "0.9.3"
 rustls = { version = "0.20.8", features = ["dangerous_configuration", "quic"] }
+proc-macro2 = { version = "1.0" }
+quote = { version = "1.0" }
+prost-build = "0.11.5"
 
 [build-dependencies]
 prost-build = "0.11.5"

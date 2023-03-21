@@ -1,3 +1,7 @@
+//! Transports out of the box for the communications between two ends using Decentraland RPC.
+//!
+//! The Decentraland RPC implementation uses protobuf for the messages format and uses whatever transport or wire that meet the requirements of the [`Transport`] trait.
+//!
 use async_trait::async_trait;
 
 pub mod error;
