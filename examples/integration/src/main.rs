@@ -199,7 +199,7 @@ async fn run_memory_transport() {
 /// This example runs the RpcServer and RpcClients using WebSockets as a transport for messages
 async fn run_ws_transport() {
     // 1. Creates the WebSocket server to listen for WS connections.
-    let ws_server = WebSocketServer::new("127.0.0.1:8080");
+    let mut ws_server = WebSocketServer::new("127.0.0.1:8080");
 
     // 2. Makes the WebSocket server start listening for connections. Not blocking as it'll be listening in the background
     let mut connection_listener = ws_server.listen().await.unwrap();
@@ -281,7 +281,7 @@ async fn run_ws_transport() {
 /// This example wants to show you that it's possible to use multiple type of transports, we don't know if there is a real use case but it's possible.
 async fn run_with_dyn_transport() {
     // 1. Creates the WebSocket server to listen for WS connections.
-    let ws_server = WebSocketServer::new("127.0.0.1:8080");
+    let mut ws_server = WebSocketServer::new("127.0.0.1:8080");
 
     // 2. Makes the WebSocket server start listening for connections. Not blocking as it'll be listening in the background
     let mut connection_listener = ws_server.listen().await.unwrap();
