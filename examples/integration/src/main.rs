@@ -117,6 +117,10 @@ async fn main() {
         run_memory_transport().await;
         println!("--- Running example with Web Socket Transports ---");
         run_ws_transport().await;
+        // Giving time to the OS to terminate the binding to the 8080 port used by the both examples.
+        // The listener abort on dropping the ws server.
+        sleep(Duration::from_secs(1)).await;
+        //
         println!("--- Running example with &dyn Transport ---");
         run_with_dyn_transport().await;
         // TODO: fix QUIC transport (similar to ws fix)
