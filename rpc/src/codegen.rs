@@ -15,6 +15,7 @@ pub struct RPCServiceGenerator {}
 pub struct MethodSigTokensParams {
     body: Option<TokenStream>,
     with_context: bool,
+    with_transport: bool,
 }
 
 impl RPCServiceGenerator {
@@ -35,16 +36,21 @@ impl RPCServiceGenerator {
         let output_type = self.extract_output_token(method);
         let name = extract_name_token(method);
         let context = extract_context_token(&params);
+        let transport = if params.with_transport {
+            quote! {, transport: Arc<T>}
+        } else {
+            TokenStream::default()
+        };
         let body = extract_body_token(params);
 
         if let Some(input_type) = input_type {
             quote! {
-                async fn #name(&self, request: #input_type #context)
+                async fn #name(&self, request: #input_type #context #transport)
                     #output_type #body
             }
         } else {
             quote! {
-                async fn #name(&self #context)
+                async fn #name(&self #context #transport)
                     #output_type #body
             }
         }
@@ -108,7 +114,8 @@ impl RPCServiceGenerator {
                     method,
                     MethodSigTokensParams {
                         body: None,
-                        with_context: false
+                        with_context: false,
+                        with_transport: false
                     }
                 )
             ));
@@ -129,7 +136,7 @@ impl RPCServiceGenerator {
 
         buf.push_str("#[async_trait::async_trait]\n");
         buf.push_str(&format!(
-            "pub trait {}<Context>: Send + Sync + 'static {{",
+            "pub trait {}<Context, T: ?Sized>: Send + Sync + 'static {{",
             self.get_server_service_name(service)
         ));
         for method in service.methods.iter() {
@@ -141,7 +148,8 @@ impl RPCServiceGenerator {
                     method,
                     MethodSigTokensParams {
                         body: None,
-                        with_context: true
+                        with_context: true,
+                        with_transport: true
                     }
                 )
             ));
@@ -170,11 +178,11 @@ impl RPCServiceGenerator {
 
         buf.push_str(&format!(
             "impl<T: Transport + 'static> ServiceClient<T> for {}Client<T> {{
-    fn set_client_module(rpc_client_module: RpcClientModule<T>) -> Self {{
-        Self {{ rpc_client_module }}
-    }}
-}}
-",
+                fn set_client_module(rpc_client_module: RpcClientModule<T>) -> Self {{
+                    Self {{ rpc_client_module }}
+                }}
+        }}
+        ",
             service.name
         ));
 
@@ -206,7 +214,8 @@ impl RPCServiceGenerator {
                     method,
                     MethodSigTokensParams {
                         body: Some(body),
-                        with_context: false
+                        with_context: false,
+                        with_transport: false
                     }
                 )
             ));
@@ -305,10 +314,11 @@ impl RPCServiceGenerator {
         }
         quote! {
         pub fn register_service<
-                S: #trait_name<Context> + Send + Sync + 'static,
-                Context: Send + Sync + 'static
+                S: #trait_name<Context, T> + Send + Sync + 'static,
+                Context: Send + Sync + 'static,
+                T: Transport + ?Sized + 'static
             >(
-                port: &mut RpcServerPort<Context>,
+                port: &mut RpcServerPort<Context, T>,
                 service: S
             ) {
                 let mut service_def = ServiceModuleDefinition::new();
@@ -331,16 +341,16 @@ impl RPCServiceGenerator {
         let request;
         if let Some(input_type) = input_type {
             service_call = quote! {
-                service.#method_name(#input_type::decode(request.as_slice()).unwrap(), context).await
+                service.#method_name(#input_type::decode(request.as_slice()).unwrap(), context, transport).await
             };
             request = quote! {request}
         } else {
-            service_call = quote! { service.#method_name(context).await };
+            service_call = quote! { service.#method_name(context, transport).await };
             request = quote! {_request}
         };
         quote! {
             let service = Arc::clone(&shareable_service);
-            service_def.add_unary(#proto_method_name, move |#request, context| {
+            service_def.add_unary(#proto_method_name, move |#request, context, transport| {
                 let service = service.clone();
                 Box::pin(async move {
                     let response = #service_call;
@@ -360,19 +370,19 @@ impl RPCServiceGenerator {
         let request;
         if extracted_input_type.is_some() {
             service_stream = quote! {
-                service.#method_name(#input_type::decode(request.as_slice()).unwrap(), context).await
+                service.#method_name(#input_type::decode(request.as_slice()).unwrap(), context, transport).await
             };
             request = quote! { request };
         } else {
             service_stream = quote! {
-                service.#method_name(context).await;
+                service.#method_name(context, transport).await;
             };
             request = quote! { _request };
         };
 
         quote! {
             let service = Arc::clone(&shareable_service);
-            service_def.add_server_streams(#proto_method_name, move |#request, context| {
+            service_def.add_server_streams(#proto_method_name, move |#request, context, transport| {
                 let service = service.clone();
                 Box::pin(async move {
                     let server_streams = #service_stream;
@@ -402,14 +412,14 @@ impl RPCServiceGenerator {
         };
         quote! {
             let service = Arc::clone(&shareable_service);
-            service_def.add_client_streams(#proto_method_name, move |#request, context| {
+            service_def.add_client_streams(#proto_method_name, move |#request, context, transport| {
                 let service = service.clone();
                 Box::pin(async move {
                     let generator = Generator::from_generator(request, |item| {
                         #input
                     });
 
-                    let response = service.#method_name(generator, context).await;
+                    let response = service.#method_name(generator, context, transport).await;
                     response.encode_to_vec()
                 })
             });
@@ -436,14 +446,14 @@ impl RPCServiceGenerator {
 
         quote! {
             let service = Arc::clone(&shareable_service);
-            service_def.add_bidir_streams(#proto_method_name, move |#request, context| {
+            service_def.add_bidir_streams(#proto_method_name, move |#request, context, transport| {
                 let service = service.clone();
                 Box::pin(async move {
                     let generator = Generator::from_generator(request, |item| {
                         #input
                     });
 
-                    let response = service.#method_name(generator, context).await;
+                    let response = service.#method_name(generator, context, transport).await;
                     Generator::from_generator(response, |item| item.encode_to_vec())
                 })
             });

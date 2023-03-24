@@ -1,11 +1,12 @@
 use integration::{BookServiceClient, BookServiceRegistration, RPCServiceClient};
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::{env, time::Duration};
 use tokio::sync::RwLock; // AUTO-GENERATED CODE
 
 use dcl_rpc::{
     client::RpcClient,
-    server::{RpcServer, RpcServerPort},
+    server::RpcServer,
     stream_protocol::Generator,
     transports::{
         self,
@@ -156,8 +157,13 @@ async fn run_memory_transport() {
 
         // 3. Sets a handler for the port creation. Here you could put a condition for registering a service depending on the port name.
         // Multiple services can live in a single a RpcServer.
-        server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
-            BookServiceRegistration::register_service(port, book_service::MyBookService {})
+        server.set_handler(|port| {
+            BookServiceRegistration::register_service(
+                port,
+                book_service::MyBookService {
+                    _marker: PhantomData,
+                },
+            )
         });
 
         // 4. Attaches the server-side transports to the RpcServer
@@ -243,8 +249,13 @@ async fn run_ws_transport() {
 
         // 5. Sets a handler for the port creation. Here you could put a condition for registering a service depending on the port name.
         // Multiple services can live in a single a RpcServer.
-        server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
-            BookServiceRegistration::register_service(port, book_service::MyBookService {})
+        server.set_handler(|port| {
+            BookServiceRegistration::register_service(
+                port,
+                book_service::MyBookService {
+                    _marker: PhantomData,
+                },
+            )
         });
 
         // 6. Spawns a background task to receive the WS connections that the WebSocket server are accepting to send it through a channel to the RpcServer. A RpcServer could have multiple clients
@@ -321,8 +332,13 @@ async fn run_with_dyn_transport() {
 
         // 5. Sets a handler for the port creation. Here you could put a condition for registering a service depending on the port name.
         // Multiple services can live in a single a RpcServer.
-        server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
-            BookServiceRegistration::register_service(port, book_service::MyBookService {})
+        server.set_handler(|port| {
+            BookServiceRegistration::register_service(
+                port,
+                book_service::MyBookService {
+                    _marker: PhantomData,
+                },
+            )
         });
 
         // Cast Arc<> to use multiple transport types in the server

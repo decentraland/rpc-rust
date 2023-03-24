@@ -22,21 +22,21 @@ use crate::{
 };
 
 /// Handler that runs each time that a port is created
-type PortHandlerFn<Context> = dyn Fn(&mut RpcServerPort<Context>) + Send + Sync + 'static;
+type PortHandlerFn<Context, T> = dyn Fn(&mut RpcServerPort<Context, T>) + Send + Sync + 'static;
 
 /// Result type for all [`RpcServer`] functions
 pub type ServerResult<T> = Result<T, ServerError>;
 
 /// Server Procedure types
-enum Procedure<Context> {
+enum Procedure<Context, T: Transport + ?Sized> {
     /// Unary Procedure. Basic request<>response
-    Unary(Arc<UnaryRequestHandler<Context>>),
+    Unary(Arc<UnaryRequestHandler<Context, T>>),
     /// Server Streams Procedure. `RpcClient` sends a request and waits for the [`RpcServer`] to send all the data that it has and close the stream opened
-    ServerStreams(Arc<ServerStreamsRequestHandler<Context>>),
+    ServerStreams(Arc<ServerStreamsRequestHandler<Context, T>>),
     /// Client Streams Procedure. `RpcClient` sends a request and opens a stream in the [`RpcServer`], then [`RpcServer`] waits for `RpcClient` to send all the payloads
-    ClientStreams(Arc<ClientStreamsRequestHandler<Context>>),
+    ClientStreams(Arc<ClientStreamsRequestHandler<Context, T>>),
     /// BiDirectional Streams Procedure. A stream is opened on both sides (client and server)
-    BiStreams(Arc<BiStreamsRequestHandler<Context>>),
+    BiStreams(Arc<BiStreamsRequestHandler<Context, T>>),
 }
 
 #[derive(Debug)]
@@ -126,9 +126,9 @@ pub struct RpcServer<Context, T: Transport + ?Sized> {
     /// The Transport used for the communication between `RpcClient` and [`RpcServer`]
     transports: HashMap<TransportID, Arc<T>>,
     /// The handler executed when a new port is created
-    handler: Option<Box<PortHandlerFn<Context>>>,
+    handler: Option<Box<PortHandlerFn<Context, T>>>,
     /// Ports registered in the [`RpcServer`]
-    ports: HashMap<u32, RpcServerPort<Context>>,
+    ports: HashMap<u32, RpcServerPort<Context, T>>,
     /// RpcServer Context
     context: Arc<Context>,
     /// Handler in charge of handling every request<>response.
@@ -338,7 +338,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
     /// for the port.
     pub fn set_handler<H>(&mut self, handler: H)
     where
-        H: Fn(&mut RpcServerPort<Context>) + Send + Sync + 'static,
+        H: Fn(&mut RpcServerPort<Context, T>) + Send + Sync + 'static,
     {
         self.handler = Some(Box::new(handler));
     }
@@ -369,7 +369,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                         self.messages_handler.process_unary_request(
                             transport_cloned,
                             message_identifier,
-                            procedure_handler(request.payload, procedure_ctx),
+                            procedure_handler(request.payload, procedure_ctx, transport),
                         );
                     }
                     Procedure::ServerStreams(procedure_handler) => {
@@ -380,7 +380,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                 transport_cloned,
                                 message_identifier,
                                 request.port_id,
-                                procedure_handler(request.payload, procedure_ctx),
+                                procedure_handler(request.payload, procedure_ctx, transport),
                             )
                     }
                     Procedure::ClientStreams(procedure_handler) => {
@@ -408,6 +408,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                         procedure_handler(
                                             stream_protocol.to_generator(|item| item),
                                             procedure_ctx,
+                                            transport,
                                         ),
                                         listener,
                                     );
@@ -440,6 +441,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                     procedure_handler(
                                         stream_protocol.to_generator(|item| item),
                                         procedure_ctx,
+                                        transport,
                                     ),
                                 );
                             }
@@ -610,22 +612,22 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
 }
 
 /// RpcServerPort is what a RpcServer contains to handle different services/modules
-pub struct RpcServerPort<Context> {
+pub struct RpcServerPort<Context, T: Transport + ?Sized> {
     /// RpcServer name
     pub name: String,
     /// Registered modules contains the name and module/service definition
     ///
     /// A module can be registered but not loaded
-    registered_modules: HashMap<String, ServiceModuleDefinition<Context>>,
+    registered_modules: HashMap<String, ServiceModuleDefinition<Context, T>>,
     /// Loaded modules contains the name and a collection of procedures with id and the name for each one
     ///
     /// A module is loaded when the client requests to.
     loaded_modules: HashMap<String, ServerModuleDeclaration>,
     /// Procedures contains the id and the handler for each procedure
-    procedures: HashMap<u32, Definition<Context>>,
+    procedures: HashMap<u32, Definition<Context, T>>,
 }
 
-impl<Context> RpcServerPort<Context> {
+impl<Context, T: Transport + ?Sized> RpcServerPort<Context, T> {
     fn new(name: String) -> Self {
         RpcServerPort {
             name,
@@ -639,7 +641,7 @@ impl<Context> RpcServerPort<Context> {
     pub fn register_module(
         &mut self,
         module_name: String,
-        service_definition: ServiceModuleDefinition<Context>,
+        service_definition: ServiceModuleDefinition<Context, T>,
     ) {
         self.registered_modules
             .insert(module_name, service_definition);
@@ -704,7 +706,7 @@ impl<Context> RpcServerPort<Context> {
     }
 
     /// It will look up the procedure id in the port's `procedures` and return the procedure's handler
-    fn get_procedure(&self, procedure_id: u32) -> ServerResult<Procedure<Context>> {
+    fn get_procedure(&self, procedure_id: u32) -> ServerResult<Procedure<Context, T>> {
         match self.procedures.get(&procedure_id) {
             Some(procedure_definition) => match procedure_definition {
                 Definition::Unary(procedure_handler) => {

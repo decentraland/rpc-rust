@@ -2,16 +2,20 @@ use crate::{
     Book, BookServiceServer, ClientStreamRequest, GetBookRequest, MyExampleContext,
     QueryBooksRequest, ServerStreamResponse,
 };
-use std::{sync::Arc, time::Duration};
+use std::{marker::PhantomData, sync::Arc, time::Duration};
 
 use dcl_rpc::stream_protocol::Generator;
 use tokio::time::sleep;
 
-pub struct MyBookService {}
+pub struct MyBookService<T: ?Sized> {
+    pub _marker: PhantomData<T>,
+}
 
 #[async_trait::async_trait]
-impl BookServiceServer<MyExampleContext> for MyBookService {
-    async fn send_book(&self, book: Book, ctx: Arc<MyExampleContext>) {
+impl<T: Send + Sync + ?Sized + 'static> BookServiceServer<MyExampleContext, T>
+    for MyBookService<T>
+{
+    async fn send_book(&self, book: Book, ctx: Arc<MyExampleContext>, _t: Arc<T>) {
         let mut books = ctx.hardcoded_database.write().await;
 
         // Simulate DB operation
@@ -24,7 +28,7 @@ impl BookServiceServer<MyExampleContext> for MyBookService {
         books.push(book);
     }
 
-    async fn get_sample_book(&self, _ctx: Arc<MyExampleContext>) -> Book {
+    async fn get_sample_book(&self, _ctx: Arc<MyExampleContext>, _t: Arc<T>) -> Book {
         Book {
             author: "mr jobs".to_string(),
             title: "Rust: how do futures work under the hood?".to_string(),
@@ -32,7 +36,12 @@ impl BookServiceServer<MyExampleContext> for MyBookService {
         }
     }
 
-    async fn get_book(&self, request: GetBookRequest, ctx: Arc<MyExampleContext>) -> Book {
+    async fn get_book(
+        &self,
+        request: GetBookRequest,
+        ctx: Arc<MyExampleContext>,
+        _t: Arc<T>,
+    ) -> Book {
         let books = ctx.hardcoded_database.read().await;
 
         // Simulate DB operation
@@ -56,6 +65,7 @@ impl BookServiceServer<MyExampleContext> for MyBookService {
         &self,
         request: QueryBooksRequest,
         ctx: Arc<MyExampleContext>,
+        _t: Arc<T>,
     ) -> ServerStreamResponse<Book> {
         println!("> BookService > server stream > QueryBooks");
         let (generator, generator_yielder) = Generator::create();
@@ -77,6 +87,7 @@ impl BookServiceServer<MyExampleContext> for MyBookService {
         &self,
         mut request: ClientStreamRequest<GetBookRequest>,
         ctx: Arc<MyExampleContext>,
+        _t: Arc<T>,
     ) -> Book {
         let books = ctx.hardcoded_database.read().await;
 
@@ -89,6 +100,7 @@ impl BookServiceServer<MyExampleContext> for MyBookService {
         &self,
         mut request: ClientStreamRequest<GetBookRequest>,
         ctx: Arc<MyExampleContext>,
+        _t: Arc<T>,
     ) -> ServerStreamResponse<Book> {
         println!("> BookService > bidir stream > QueryBooksStream");
         let (generator, generator_yielder) = Generator::create();

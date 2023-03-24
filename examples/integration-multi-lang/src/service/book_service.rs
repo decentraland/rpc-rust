@@ -4,14 +4,19 @@ use crate::{
 };
 use std::{sync::Arc, time::Duration};
 
-use dcl_rpc::stream_protocol::Generator;
+use dcl_rpc::{stream_protocol::Generator, transports::web_socket::WebSocketTransport};
 use tokio::time::sleep;
 
 pub struct BookService {}
 
 #[async_trait::async_trait]
-impl BookServiceServer<MyExampleContext> for BookService {
-    async fn get_book(&self, request: GetBookRequest, ctx: Arc<MyExampleContext>) -> Book {
+impl BookServiceServer<MyExampleContext, WebSocketTransport> for BookService {
+    async fn get_book(
+        &self,
+        request: GetBookRequest,
+        ctx: Arc<MyExampleContext>,
+        _: Arc<WebSocketTransport>,
+    ) -> Book {
         assert_eq!(ctx.hardcoded_database.len(), 5);
 
         // Simulate DB operation
@@ -36,6 +41,7 @@ impl BookServiceServer<MyExampleContext> for BookService {
         &self,
         request: QueryBooksRequest,
         ctx: Arc<MyExampleContext>,
+        _: Arc<WebSocketTransport>,
     ) -> ServerStreamResponse<Book> {
         println!("> BookService > server stream > QueryBooks");
         let (generator, generator_yielder) = Generator::create();
@@ -56,6 +62,7 @@ impl BookServiceServer<MyExampleContext> for BookService {
         &self,
         mut request: ClientStreamRequest<GetBookRequest>,
         ctx: Arc<MyExampleContext>,
+        _: Arc<WebSocketTransport>,
     ) -> Book {
         while request.next().await.is_some() {}
 
@@ -66,6 +73,7 @@ impl BookServiceServer<MyExampleContext> for BookService {
         &self,
         mut request: ClientStreamRequest<GetBookRequest>,
         ctx: Arc<MyExampleContext>,
+        _: Arc<WebSocketTransport>,
     ) -> ServerStreamResponse<Book> {
         println!("> BookService > bidir stream > QueryBooksStream");
         let (generator, generator_yielder) = Generator::create();

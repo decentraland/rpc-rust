@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dcl_rpc::{
-    server::{RpcServer, RpcServerPort},
+    server::RpcServer,
     transports::web_socket::{WebSocketServer, WebSocketTransport},
 };
 use integration_multi_lang::{
@@ -60,7 +60,7 @@ async fn run_ws_example() {
     };
 
     let mut server = RpcServer::create(ctx);
-    server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
+    server.set_handler(|port| {
         BookServiceRegistration::register_service(port, book_service::BookService {})
     });
 
