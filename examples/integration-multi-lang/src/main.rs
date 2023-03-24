@@ -48,7 +48,7 @@ async fn main() {
 }
 
 async fn run_ws_example() {
-    let ws_server = WebSocketServer::new("127.0.0.1:8080");
+    let mut ws_server = WebSocketServer::new("127.0.0.1:8080");
 
     // Listen in background task
     let mut connection_listener = ws_server.listen().await.unwrap();

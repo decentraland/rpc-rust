@@ -17,6 +17,7 @@ use tokio::{
         mpsc::{unbounded_channel, UnboundedReceiver},
         Mutex,
     },
+    task::JoinHandle,
 };
 use tokio_tungstenite::connect_async;
 
@@ -37,6 +38,8 @@ type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 pub struct WebSocketServer {
     /// Address to listen for new connection
     address: String,
+    /// TPC Listener Join Handle
+    tpc_listener_handle: Option<JoinHandle<()>>,
 }
 
 /// Receiver half of a channel to get notified that there is a new connection
@@ -50,6 +53,7 @@ impl WebSocketServer {
     pub fn new(address: &str) -> Self {
         Self {
             address: address.to_string(),
+            tpc_listener_handle: None,
         }
     }
 
@@ -57,14 +61,14 @@ impl WebSocketServer {
     ///
     /// Each new connection will be sent through the `OnConnectionListener`, in order to be attached to the [`RpcServer`](crate::server::RpcServer)  as a [`WebSocketTransport`]
     ///
-    pub async fn listen(&self) -> Result<OnConnectionListener, TransportError> {
+    pub async fn listen(&mut self) -> Result<OnConnectionListener, TransportError> {
         // listen to given address
         let listener = TcpListener::bind(&self.address).await?;
         debug!("Listening on: {}", self.address);
 
         let (tx_on_connection_listener, rx_on_connection_listener) = unbounded_channel();
 
-        tokio::spawn(async move {
+        let join_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {
@@ -110,7 +114,17 @@ impl WebSocketServer {
             }
         });
 
+        self.tpc_listener_handle = Some(join_handle);
+
         Ok(rx_on_connection_listener)
+    }
+}
+
+impl Drop for WebSocketServer {
+    fn drop(&mut self) {
+        if let Some(handle) = &self.tpc_listener_handle {
+            handle.abort();
+        }
     }
 }
 
