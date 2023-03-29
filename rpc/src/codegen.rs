@@ -473,9 +473,13 @@ fn extract_body_token(params: MethodSigTokensParams) -> TokenStream {
 impl ServiceGenerator for RPCServiceGenerator {
     fn generate(&mut self, service: Service, buf: &mut String) {
         self.generate_stream_types(buf);
+        #[cfg(feature = "client")]
         self.generate_client_trait(&service, buf);
+        #[cfg(feature = "client")]
         self.generate_client_service(&service, buf);
+        #[cfg(feature = "server")]
         self.generate_server_trait(&service, buf);
+        #[cfg(feature = "server")]
         self.generate_server_service(&service, buf);
         println!("{}", buf);
     }

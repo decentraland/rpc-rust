@@ -20,11 +20,13 @@
 //! You could find basic and complex examples in the [examples folder](https://github.com/decentraland/rpc-rust/tree/main/examples) on the [github repository](https://github.com/decentraland/rpc-rust).
 //!
 
+#[cfg(feature = "client")]
 pub mod client;
 #[cfg(feature = "codegen")]
 pub mod codegen;
 pub mod messages_handlers;
 pub mod rpc_protocol;
+#[cfg(feature = "server")]
 pub mod server;
 pub mod service_module_definition;
 pub mod stream_protocol;
