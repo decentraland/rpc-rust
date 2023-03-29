@@ -1,13 +1,9 @@
 # dcl-rpc
 
-[![Build](https://github.com/decentraland/rpc-rust/workflows/Validations/badge.svg)](
-<https://github.com/decentraland/rpc-rust/actions>)
-[![License](https://img.shields.io/badge/license-Apache--2.0_OR_MIT-blue.svg)](
-<https://github.com/decentraland/rpc-rust>)
-[![Cargo](https://img.shields.io/crates/v/dcl-rpc.svg)](
-<https://crates.io/crates/dcl-rpc>)
-[![Documentation](https://docs.rs/dcl-rpc/badge.svg)](
-<https://docs.rs/dcl-rpc>)
+[![Build](https://github.com/decentraland/rpc-rust/workflows/Validations/badge.svg)](https://github.com/decentraland/rpc-rust/actions)
+[![License](https://img.shields.io/badge/license-Apache--2.0_OR_MIT-blue.svg)](https://github.com/decentraland/rpc-rust)
+[![Cargo](https://img.shields.io/crates/v/dcl-rpc.svg)](https://crates.io/crates/dcl-rpc)
+[![Documentation](https://docs.rs/dcl-rpc/badge.svg)](https://docs.rs/dcl-rpc)
 
 The Rust implementation of Decentraland RPC. At Decentraland, we have our own implementation of RPC for communications between the different services.
 
@@ -17,20 +13,6 @@ Currently, there are other implementations:
 - [C#](https://github.com/decentraland/rpc-csharp)
 
 ## Requirements
-
-- Install protoc binaries
-
-### MacOS
-
-```bash
-brew install protobuf
-```
-
-### Debian-based Linux
-
-```bash
-sudo apt-get install protobuf-compiler
-```
 
 - Install Just
 
@@ -48,13 +30,13 @@ RPC Client in Rust and RPC Server in Rust running Websocket transport example, M
 
 `just run-integration`
 
-### Run the integration example with an specific transport 
+### Run the integration example with an specific transport
 
 RPC Client in Rust and RPC Server in Rust running the example passed to the command
 
 `just run-integration {ws|memory|dyn}`
 
-### Run the multi language integration example 
+### Run the multi language integration example
 
 RPC Client in Typescript and RPC Server in Rust using WebSockets
 
@@ -108,11 +90,12 @@ fn main() -> Result<()> {
 }
 ```
 
-The `build.rs` script runs every time that your `.proto` changes. The script will generate a file in the `OUT_DIR`, named as the `package` field in the `.proto` file (if it's not declared, the name will be '_.rs'). This file will include: 
-- All your declared messages in the `.proto` as Rust structs. *1
-- A trait, named `{YOUR_RPC_SERVICE_NAME}Server`, with the methods defined in your service for the server side. So you should use this trait to build an implementation with the business logic. *2
-- A trait, named `RpcServiceClient`, and an implementation of it for the client side, named `{YOUR_RPC_SERVICE_NAME}Client`. You must use this auto-generated implementation when using the `RpcClient` passing the implementation (struct with the trait implemented) as a generic in the `load_module` function, which it'll be in charge of requesting the procedures of your service. *3
-- A struct in charge of registering your declared service when a `RpcServerPort` is created. You should use this struct and its registering function inside the `RpcServer` port creation handler. *4
+The `build.rs` script runs every time that your `.proto` changes. The script will generate a file in the `OUT_DIR`, named as the `package` field in the `.proto` file (if it's not declared, the name will be '\_.rs'). This file will include:
+
+- All your declared messages in the `.proto` as Rust structs. \*1
+- A trait, named `{YOUR_RPC_SERVICE_NAME}Server`, with the methods defined in your service for the server side. So you should use this trait to build an implementation with the business logic. \*2
+- A trait, named `RpcServiceClient`, and an implementation of it for the client side, named `{YOUR_RPC_SERVICE_NAME}Client`. You must use this auto-generated implementation when using the `RpcClient` passing the implementation (struct with the trait implemented) as a generic in the `load_module` function, which it'll be in charge of requesting the procedures of your service. \*3
+- A struct in charge of registering your declared service when a `RpcServerPort` is created. You should use this struct and its registering function inside the `RpcServer` port creation handler. \*4
 
 To import them you must add:
 
@@ -126,8 +109,8 @@ This statement should be added to the `src/lib.rs` in order to make the auto-gen
 
 ```rust
 use dcl_rpc::{
-    transports::web_socket::{WebSocketServer, WebSocketTransport}, 
-    server::{RpcServer, RpcServerPort}, 
+    transports::web_socket::{WebSocketServer, WebSocketTransport},
+    server::{RpcServer, RpcServerPort},
     service_module_definition::{Definition, ServiceModuleDefinition, CommonPayload}
 };
 
@@ -176,7 +159,7 @@ Implement the trait for your service
 
 ```rust
 use crate::{
-    MyExampleContext, 
+    MyExampleContext,
     EchoServiceServer, // (*2)
     Text // (*1) message
 };

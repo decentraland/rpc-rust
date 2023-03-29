@@ -21,6 +21,7 @@
 //!
 
 pub mod client;
+#[cfg(feature = "codegen")]
 pub mod codegen;
 pub mod messages_handlers;
 pub mod rpc_protocol;
