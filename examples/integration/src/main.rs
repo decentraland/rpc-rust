@@ -433,9 +433,23 @@ async fn handle_client_connection<T: Transport + 'static, T2: Transport + 'stati
     println!("> Unary > Request > GetBook");
 
     let get_book_payload = GetBookRequest { isbn: 1000 };
-    let response = book_service_client.get_book(get_book_payload).await;
+    let response = book_service_client
+        .get_book(get_book_payload)
+        .await
+        .unwrap(); // Should not fail
 
     println!("> Unary > Response > GetBook: {:?}", response);
+
+    let get_book_payload = GetBookRequest { isbn: 2000 };
+    let response_error = book_service_client
+        .get_book(get_book_payload)
+        .await
+        .unwrap_err(); // SHOULD FAIL!
+
+    println!(
+        "> Unary > Response Error > RemoteError on GetBook: {:?}",
+        response_error
+    );
 
     assert_eq!(response.isbn, 1000);
     assert_eq!(response.title, "Rust: crash course");
@@ -444,7 +458,10 @@ async fn handle_client_connection<T: Transport + 'static, T2: Transport + 'stati
     println!("> Client 2 > Unary > Request > GetBook");
 
     let get_book_payload = GetBookRequest { isbn: 1004 };
-    let response = book_service_client_2.get_book(get_book_payload).await;
+    let response = book_service_client_2
+        .get_book(get_book_payload)
+        .await
+        .unwrap(); // Should not fail
 
     println!("> Client 2 > Unary > Response > GetBook: {:?}", response);
 
@@ -459,10 +476,19 @@ async fn handle_client_connection<T: Transport + 'static, T2: Transport + 'stati
     let get_book_payload = GetBookRequest { isbn: 1000 };
     let get_book_payload_2 = GetBookRequest { isbn: 1001 };
 
-    join!(
+    let (result_1, result_2) = join!(
         book_service_client.get_book(get_book_payload),
         book_service_client.get_book(get_book_payload_2)
     );
+
+    println!(
+        "> GetBook > Concurrent Example > Result 1: {:?}",
+        result_1.unwrap()
+    ); // Should not fail
+    println!(
+        "> GetBook > Concurrent Example > Result 2: {:?}",
+        result_2.unwrap()
+    ); // Should not fail
 
     println!("> Server Streams > Request > QueryBooks");
 
@@ -470,7 +496,10 @@ async fn handle_client_connection<T: Transport + 'static, T2: Transport + 'stati
         author_prefix: "mr".to_string(),
     };
 
-    let mut response_stream = book_service_client.query_books(query_books_payload).await;
+    let mut response_stream = book_service_client
+        .query_books(query_books_payload)
+        .await
+        .unwrap(); // Should not fail
 
     while let Some(book) = response_stream.next().await {
         println!("> Server Streams > Response > QueryBooks {:?}", book)
@@ -504,7 +533,10 @@ async fn handle_client_connection<T: Transport + 'static, T2: Transport + 'stati
                 .unwrap();
         }
     });
-    let mut response = book_service_client.query_books_stream(generator).await;
+    let mut response = book_service_client
+        .query_books_stream(generator)
+        .await
+        .unwrap(); // Should not fail
 
     while let Some(book) = response.next().await {
         println!("> BiDir Streams > Response > QueryBooksStream {:?}", book)
