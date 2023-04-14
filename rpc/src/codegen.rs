@@ -396,7 +396,7 @@ impl RPCServiceGenerator {
                 Box::pin(async move {
                     match #service_stream {
                         // Transforming and filling the new generator is spawned so the response is quick
-                        Ok(server_streams_generator) => Ok(Generator::from_generator(server_streams_generator, |item| item.encode_to_vec())),
+                        Ok(server_streams_generator) => Ok(Generator::from_generator(server_streams_generator, |item| Some(item.encode_to_vec()))),
                         Err(err) => Err(err.into())
                     }
                 })
@@ -427,7 +427,7 @@ impl RPCServiceGenerator {
                 let service = service.clone();
                 Box::pin(async move {
                     let generator = Generator::from_generator(request, |item| {
-                        #input
+                        Some(#input)
                     });
 
                     match service.#method_name(generator, context).await {
@@ -463,11 +463,11 @@ impl RPCServiceGenerator {
                 let service = service.clone();
                 Box::pin(async move {
                     let generator = Generator::from_generator(request, |item| {
-                        #input
+                        Some(#input)
                     });
 
                     match service.#method_name(generator, context).await {
-                        Ok(response_generator) => Ok(Generator::from_generator(response_generator, |item| item.encode_to_vec())),
+                        Ok(response_generator) => Ok(Generator::from_generator(response_generator, |item| Some(item.encode_to_vec()))),
                         Err(err) => Err(err.into())
                     }
                 })

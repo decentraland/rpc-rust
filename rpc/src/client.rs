@@ -34,6 +34,10 @@ pub enum ClientError {
     TransportError,
     /// Given procedure id was not found in the Client state. Client state was filled by the server.
     ProcedureNotExists,
+    /// Error that it's not supossed to happen
+    UnexpectedError(String),
+    /// A Port with the given name already exists
+    PortNameAlreadyExists,
 }
 
 #[derive(Debug)]
@@ -94,6 +98,12 @@ impl<T: Transport + 'static> RpcClient<T> {
 
     /// Sends a request to the [`RpcServer`](crate::server::RpcServer)  in order to create a new port for the `RpcClient`
     pub async fn create_port(&mut self, port_name: &str) -> ClientResult<&RpcClientPort<T>> {
+        if self.ports.contains_key(port_name) {
+            return Err(ClientResultError::Client(
+                ClientError::PortNameAlreadyExists,
+            ));
+        }
+
         let (_message_type, _message_number, create_port_response) = self
             .client_request_dispatcher
             .request::<CreatePortResponse, _, _>(|message_id| CreatePort {
@@ -113,7 +123,14 @@ impl<T: Transport + 'static> RpcClient<T> {
 
         self.ports.insert(port_name.to_string(), rpc_client_port);
 
-        Ok(self.ports.get(port_name).unwrap())
+        if let Some(port) = self.ports.get(port_name) {
+            Ok(port)
+        } else {
+            // We prefer to do this instead of a `.unwrap()` even it's safe to do it (like here)
+            Err(ClientResultError::Client(ClientError::UnexpectedError(
+                "Error on getting the port, seems not to be in the client state.".to_string(),
+            )))
+        }
     }
 }
 
@@ -251,7 +268,13 @@ impl<T: Transport> RpcClientModule<T> {
             .await?;
 
         let generator =
-            stream_protocol.to_generator(|item| ReturnType::decode(item.as_slice()).unwrap());
+            stream_protocol.to_generator(|item| match ReturnType::decode(item.as_slice()) {
+                Ok(item_decoded) => Some(item_decoded),
+                Err(_) => {
+                    log::error!("> RpcClient > call_server_streams_procedure > StreamProtocol::to_generator > Error on decoding the ReturnType");
+                    None
+                }
+            });
 
         Ok(generator)
     }
@@ -325,8 +348,13 @@ impl<T: Transport> RpcClientModule<T> {
             .stream_server_messages(self.port_id, response.1)
             .await?;
 
-        let generator =
-            stream_protocol.to_generator(|item| ReturnType::decode(item.as_slice()).unwrap());
+        let generator = stream_protocol.to_generator(|item| {
+            if let Ok(item_decoded) = ReturnType::decode(item.as_slice()) {
+                Some(item_decoded)
+            } else {
+                None
+            }
+        });
 
         Ok(generator)
     }
@@ -359,10 +387,10 @@ impl<T: Transport> RpcClientModule<T> {
     /// It gets the procedure id given by the server by a procedure name
     fn get_procedure_id(&self, procedure_name: &str) -> ClientResult<u32> {
         let procedure_id = self.procedures.get(procedure_name);
-        if procedure_id.is_none() {
-            return Err(ClientResultError::Client(ClientError::ProcedureNotExists));
+        if let Some(procedure_id) = procedure_id {
+            return Ok(procedure_id.to_owned());
         }
-        Ok(procedure_id.unwrap().to_owned())
+        Err(ClientResultError::Client(ClientError::ProcedureNotExists))
     }
 }
 

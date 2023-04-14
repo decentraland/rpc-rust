@@ -8,14 +8,14 @@ use crate::{
             build_message_identifier, fill_remote_error, parse_header, parse_message_identifier,
             parse_protocol_message,
         },
-        Response, RpcMessageTypes, StreamMessage,
+        RemoteError, Response, RpcMessageTypes, StreamMessage,
     },
-    server::{ServerInternalError, ServerResult, ServerResultError},
+    server::{ServerError, ServerInternalError, ServerResult, ServerResultError},
     service_module_definition::{
         BiStreamsResponse, ClientStreamsResponse, ServerStreamsResponse, UnaryResponse,
     },
     stream_protocol::Generator,
-    transports::{Transport, TransportEvent},
+    transports::{Transport, TransportError, TransportEvent},
     CommonError,
 };
 use async_channel::Sender as AsyncChannelSender;
@@ -73,16 +73,21 @@ impl ServerMessagesHandler {
                         payload: procedure_response,
                     };
 
-                    transport.send(response.encode_to_vec()).await.unwrap(); // TODO: handle error
+                    if let Err(err) = transport.send(response.encode_to_vec()).await {
+                        error!("> ServerMessagesHandler > Error on sending procedure response through a transport - message num: {message_number} - error: {err:?}");
+                        if !matches!(err, TransportError::Closed) {
+                            // Try to communicate the error to client. Maybe the transport is not closed and it's another type of error
+                            send_remote_error(
+                                transport,
+                                message_number,
+                                ServerError::UnexpectedErrorOnTransport.into(),
+                            )
+                            .await;
+                        }
+                    }
                 }
-                Err(mut procedure_remote_error) => {
-                    // We have to complete the RemoteError message becaue the message_identifier is 0 because
-                    // `message_number` (message_identifier) is not given to the procedure_handler and it's unable to build the identifier
-                    fill_remote_error(&mut procedure_remote_error, message_number);
-                    transport
-                        .send(procedure_remote_error.encode_to_vec())
-                        .await
-                        .unwrap(); // TODO: handle error
+                Err(procedure_remote_error) => {
+                    send_remote_error(transport, message_number, procedure_remote_error).await;
                 }
             };
         });
@@ -99,27 +104,58 @@ impl ServerMessagesHandler {
         procedure_handler: ServerStreamsResponse,
     ) {
         tokio::spawn(async move {
-            let open_ack_listener = self
+            match self
                 .open_server_stream(transport.clone(), message_number, port_id)
                 .await
-                .unwrap();
-
-            open_ack_listener.await.unwrap();
-
-            match procedure_handler.await {
-                Ok(generator) => self
-                    .streams_handler
-                    .send_stream_through_transport(transport, generator, port_id, message_number)
-                    .await
-                    .unwrap(), // TODO: Handle error
-                Err(mut procedure_remote_error) => {
-                    // We have to complete the RemoteError message becaue the message_identifier is 0 because
-                    // `message_number` (message_identifier) is not given to the procedure_handler and it's unable to build the identifier
-                    fill_remote_error(&mut procedure_remote_error, message_number);
-                    transport
-                        .send(procedure_remote_error.encode_to_vec())
-                        .await
-                        .unwrap(); // TODO: handle error
+            {
+                Ok(open_ack_listener) => match open_ack_listener.await {
+                    Ok(_) => match procedure_handler.await {
+                        Ok(generator) => {
+                            if let Err(error) = self
+                                .streams_handler
+                                .send_streams_through_transport(
+                                    transport.clone(),
+                                    generator,
+                                    port_id,
+                                    message_number,
+                                )
+                                .await
+                            {
+                                error!("> ServerMessagesHandler > process_server_streams_request > Error while executing StreamsHandler::send_streams_through_transport - Error: {error:?}");
+                                if !matches!(error, CommonError::TransportWasClosed) {
+                                    // Try to communicate the error to client. Maybe the transport is not closed and it's another type of error
+                                    send_remote_error(
+                                        transport,
+                                        message_number,
+                                        ServerError::UnexpectedErrorOnTransport.into(),
+                                    )
+                                    .await;
+                                }
+                            }
+                        }
+                        Err(procedure_remote_error) => {
+                            send_remote_error(transport, message_number, procedure_remote_error)
+                                .await
+                        }
+                    },
+                    Err(_) => {
+                        error!("> ServerMessagesHandler > process_server_streams_request > Error on receiving on a open_ack_listener, sender seems to be dropped");
+                    }
+                },
+                Err(error) => {
+                    error!("> ServerMessagesHandler > process_server_streams_request > Erron on opening a server stream: {error:?}");
+                    if !matches!(
+                        error,
+                        ServerResultError::Internal(ServerInternalError::TransportWasClosed)
+                    ) {
+                        // Try to communicate the error to client. Maybe the transport is not closed and it's another type of error
+                        send_remote_error(
+                            transport,
+                            message_number,
+                            ServerError::UnexpectedErrorOnTransport.into(),
+                        )
+                        .await;
+                    }
                 }
             }
         });
@@ -143,14 +179,8 @@ impl ServerMessagesHandler {
                     self.send_response(transport, message_number, procedure_response)
                         .await;
                 }
-                Err(mut procedure_remote_err) => {
-                    // We have to complete the RemoteError message becaue the message_identifier is 0 because
-                    // `message_number` (message_identifier) is not given to the procedure_handler and it's unable to build the identifier
-                    fill_remote_error(&mut procedure_remote_err, message_number);
-                    transport
-                        .send(procedure_remote_err.encode_to_vec())
-                        .await
-                        .unwrap(); // TODO: Handle error
+                Err(procedure_remote_err) => {
+                    send_remote_error(transport, message_number, procedure_remote_err).await;
                 }
             }
         });
@@ -170,24 +200,61 @@ impl ServerMessagesHandler {
     ) {
         tokio::spawn(async move {
             self.register_listener(client_stream_id, listener).await;
-            let open_ack_listener = self
+            match self
                 .open_server_stream(transport.clone(), message_number, port_id)
                 .await
-                .unwrap();
-
-            open_ack_listener.await.unwrap();
-
-            match procedure_handler.await {
-                Ok(generator) => self
-                    .streams_handler
-                    .send_stream_through_transport(transport, generator, port_id, message_number)
-                    .await
-                    .unwrap(), // TODO: Handle error
-                Err(mut remote_error) => {
-                    // We have to complete the RemoteError message becaue the message_identifier is 0 because
-                    // `message_number` (message_identifier) is not given to the procedure_handler and it's unable to build the identifier
-                    fill_remote_error(&mut remote_error, message_number);
-                    transport.send(remote_error.encode_to_vec()).await.unwrap() // TODO: Handle error
+            {
+                Ok(open_ack_listener) => {
+                    match open_ack_listener.await {
+                        Ok(_) => {
+                            match procedure_handler.await {
+                                Ok(generator) => {
+                                    if let Err(err) = self
+                                        .streams_handler
+                                        .send_streams_through_transport(
+                                            transport.clone(),
+                                            generator,
+                                            port_id,
+                                            message_number,
+                                        )
+                                        .await
+                                    {
+                                        error!("> ServerMessagesHandler > process_bidir_streams_request > Error while executing StreamsHandler::send_streams_through_transport - Error: {err:?}");
+                                        if !matches!(err, CommonError::TransportWasClosed) {
+                                            // Try to communicate the error to client. Maybe the transport is not closed and it's another type of error
+                                            send_remote_error(
+                                                transport,
+                                                message_number,
+                                                ServerError::UnexpectedErrorOnTransport.into(),
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                }
+                                Err(remote_error) => {
+                                    send_remote_error(transport, message_number, remote_error)
+                                        .await;
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            error!("> ServerMessagesHandler > process_bidir_streams_request > Error on receiving on a open_ack_listener, sender seems to be dropped");
+                        }
+                    }
+                }
+                Err(err) => {
+                    if !matches!(
+                        err,
+                        ServerResultError::Internal(ServerInternalError::TransportWasClosed)
+                    ) {
+                        // Try to communicate the error to client. Maybe the transport is not closed and it's another type of error
+                        send_remote_error(
+                            transport,
+                            message_number,
+                            ServerError::UnexpectedErrorOnTransport.into(),
+                        )
+                        .await;
+                    }
                 }
             }
         });
@@ -201,19 +268,29 @@ impl ServerMessagesHandler {
             let lock = self.listeners.lock().await;
             let listener = lock.get(&message_number);
             if let Some(listener) = listener {
-                listener
-                    .send((
-                        RpcMessageTypes::StreamMessage,
-                        message_number,
-                        StreamMessage::decode(payload.as_slice()).unwrap(),
-                    ))
-                    .await
-                    .unwrap() // TODO: Handle error
+                if let Ok(stream_message) = StreamMessage::decode(payload.as_slice()) {
+                    if listener
+                        .send((
+                            RpcMessageTypes::StreamMessage,
+                            message_number,
+                            stream_message,
+                        ))
+                        .await
+                        .is_err()
+                    {
+                        error!("> ServerMessagesHandler > notify_new_client_stream > Error while sending through the listener, channel seems to be closed ");
+                    }
+                } else {
+                    error!("> ServerMessagesHandler > notify_new_client_stream > Error while decoding payload into StreamMessage, something is corrupted or bad implemented");
+                }
             }
         });
     }
 
     /// Sends a common response [`Response`] through the given transport
+    ///
+    /// If it fails to send the response, it will retry it as long as the [`Transport::send`] doesn't return a [`TransportError::Closed`]
+    ///
     pub async fn send_response<T: Transport + ?Sized>(
         &self,
         transport: Arc<T>,
@@ -228,7 +305,19 @@ impl ServerMessagesHandler {
             payload,
         };
 
-        transport.send(response.encode_to_vec()).await.unwrap(); // TODO: Handle error
+        if let Err(err) = transport.send(response.encode_to_vec()).await {
+            if !matches!(err, TransportError::Closed) {
+                error!("> ServerMessagesHandler > send_response > Error while sending the original response through transport but it seems not to be closed");
+                send_remote_error(
+                    transport,
+                    message_number,
+                    ServerError::UnexpectedErrorOnTransport.into(),
+                )
+                .await;
+            } else {
+                error!("> ServerMessagesHandler > send_response > Error while sending response through transport, it seems to be clsoed");
+            }
+        }
     }
 
     /// Sends a [`StreamMessage`] in order to open the stream on the other half
@@ -254,7 +343,12 @@ impl ServerMessagesHandler {
             .streams_handler
             .send_stream(transport, opening_message)
             .await
-            .map_err(|_| ServerResultError::Internal(ServerInternalError::TransportError))?;
+            .map_err(|err| {
+                if matches!(err, CommonError::TransportWasClosed) {
+                    return ServerResultError::Internal(ServerInternalError::TransportWasClosed);
+                }
+                ServerResultError::Internal(ServerInternalError::TransportError)
+            })?;
 
         Ok(receiver)
     }
@@ -337,7 +431,7 @@ impl<T: Transport + ?Sized + 'static> ClientMessagesHandler<T> {
         tokio::spawn(async move {
             select! {
                 _ = token.cancelled() => {
-                    debug!("> ClientRequestDispatcher cancelled!")
+                    debug!("> ClientMessagesHandler > cancelled!")
                 },
                 _ = self.process() => {
 
@@ -358,49 +452,51 @@ impl<T: Transport + ?Sized + 'static> ClientMessagesHandler<T> {
                 Ok(TransportEvent::Message(data)) => {
                     let message_header = parse_header(&data);
                     match message_header {
-                        Some(message_header) => {
+                        Some((message_type, message_number)) => {
                             let mut read_callbacks = self.one_time_listeners.lock().await;
-                            // We remove the listener in order to get a owned value and also remove it from memory
-                            let sender = read_callbacks.remove(&message_header.1);
+                            // We remove the listener in order to get a owned value and also remove it from memory, it's a one time listener. It's used just this time.
+                            let sender = read_callbacks.remove(&message_number);
                             if let Some(sender) = sender {
                                 match sender.send(data) {
                                     Ok(()) => {}
                                     Err(_) => {
                                         error!(
-                                            "> RpcClient > error while sending {} response",
-                                            message_header.1
+                                            "> ClientMessagesHandler > process > error while sending {} response",
+                                            message_number
                                         );
                                         continue;
                                     }
                                 }
                             } else {
+                                // If there is no one time listener for the message_number, we check if there is a recurrent listener (StreamMessages)
                                 let listeners = self.listeners.lock().await;
-                                let listener = listeners.get(&message_header.1);
+                                let listener = listeners.get(&message_number);
 
                                 if let Some(listener) = listener {
-                                    if let Err(error) = listener
-                                        .send((
-                                            message_header.0,
-                                            message_header.1,
-                                            StreamMessage::decode(data.as_slice()).unwrap(), // TODO: Handle error
-                                        ))
-                                        .await
+                                    if let Ok(stream_message) =
+                                        StreamMessage::decode(data.as_slice())
                                     {
-                                        error!(
-                                            "> RpcClient > Error while sending message {}",
-                                            error.to_string()
-                                        );
+                                        if let Err(error) = listener
+                                            .send((message_type, message_number, stream_message))
+                                            .await
+                                        {
+                                            error!(
+                                                "> ClientMessagesHandler > process > Error while sending StreamMessage to a listener {error:?}")
+                                        }
+                                    } else {
+                                        error!("> ClientMessagesHandler > process > Error while decoding bytes into a StreamMessage, something seems to be bad implemented")
                                     }
                                 } else {
+                                    // If there is no listener for the message, then it's an ACK message for a StreamMessage from the Server
                                     self.streams_handler
                                         .clone()
-                                        .message_acknowledged_by_peer(message_header.1, data)
+                                        .message_acknowledged_by_peer(message_number, data)
                                 }
                             }
                         }
                         None => {
                             // TODO: If the bytes cannot be parsed to get the header, we should implement something to clean receiver/sender from the client state
-                            error!("> RpcClient > Error on parsing message header - impossible to communicate the error to the one time listener, the message is corrupted");
+                            error!("> ClientMessagesHandler > process > Error on parsing message header - impossible to communicate the error to a listener, the message is corrupted or invalid");
                             continue;
                         }
                     }
@@ -410,7 +506,7 @@ impl<T: Transport + ?Sized + 'static> ClientMessagesHandler<T> {
                     continue;
                 }
                 Err(_) => {
-                    error!("Client error on receiving");
+                    error!("> ClientMessagesHandler > process > Error on receive, breaking the listening");
                     break;
                 }
             }
@@ -432,20 +528,39 @@ impl<T: Transport + ?Sized + 'static> ClientMessagesHandler<T> {
     ) {
         let transport = self.transport.clone();
         tokio::spawn(async move {
-            let encoded_response = open_promise.await.unwrap(); // TODO: Handle error
-            let stream_message = StreamMessage::decode(encoded_response.as_slice()).unwrap(); // TODO: Handle error
+            match open_promise.await {
+                Ok(encoded_ack_response) => {
+                    if let Ok(stream_message) =
+                        StreamMessage::decode(encoded_ack_response.as_slice())
+                    {
+                        if stream_message.closed {
+                            return;
+                        }
 
-            if stream_message.closed {
-                return;
+                        let new_generator = Generator::from_generator(client_stream, |item| {
+                            Some(item.encode_to_vec())
+                        });
+
+                        if let Err(error) = self
+                            .streams_handler
+                            .send_streams_through_transport(
+                                transport,
+                                new_generator,
+                                port_id,
+                                client_message_id,
+                            )
+                            .await
+                        {
+                            error!("> ClientMessagesHandler > await_server_ack_open_and_send_streams > Error while executing StreamsHandler::send_streams_through_transport - Error: {error:?}");
+                        }
+                    } else {
+                        error!("> ClientMessagesHandler > await_server_ack_open_and_send_streams > Error while decoding bytes into StreamMessage")
+                    }
+                }
+                Err(_) => {
+                    error!("> ClientMessagesHandler > await_server_ack_open_and_send_streams > Error while awaiting the server to send the ACK for Open stream message, sender half seems to be dropped");
+                }
             }
-
-            let new_generator =
-                Generator::from_generator(client_stream, |item| item.encode_to_vec());
-
-            self.streams_handler
-                .send_stream_through_transport(transport, new_generator, port_id, client_message_id)
-                .await
-                .unwrap(); // TODO: Handle error
         });
     }
 
@@ -523,7 +638,7 @@ impl StreamsHandler {
     ///
     /// Also, it stops the generator and break the loop if the other half closed the stream. Otherwise, it will close the strram when the `stream_generator` doesn't have more messages.
     ///
-    pub async fn send_stream_through_transport<T: Transport + ?Sized>(
+    pub async fn send_streams_through_transport<T: Transport + ?Sized>(
         &self,
         transport: Arc<T>,
         mut stream_generator: Generator<Vec<u8>>,
@@ -552,21 +667,31 @@ impl StreamsHandler {
                     let ack_message = match listener.await {
                         Ok(msg) => match StreamMessage::decode(msg.as_slice()) {
                             Ok(msg) => msg,
-                            Err(_) => break,
+                            Err(_) => {
+                                error!("> StreamsHandler > send_streams_through_transport > Error while decoding bytes into a StreamMessage");
+                                return Err(CommonError::ProtocolError);
+                            }
                         },
-                        Err(_) => break,
+                        Err(_) => {
+                            error!("> StreamsHandler > send_streams_through_transport > Error while waiting for an ACK Message, the sender half seems to be dropped.");
+                            return Err(CommonError::UnexpectedError(
+                                "The sender half of a listener seems to be droppped".to_string(),
+                            ));
+                        }
                     };
                     if ack_message.ack {
+                        debug!("> StreamsHandler > send_streams_through_transport > Listener received the ack for a message, continuing with the next stream");
                         continue;
                     } else if ack_message.closed {
+                        debug!("> StreamsHandler > send_streams_through_transport > stream was closed by the other peer");
                         was_closed_by_peer = true;
                         stream_generator.close();
                         break;
                     }
                 }
                 Err(err) => {
-                    error!("Error while streaming a server stream {err:?}");
-                    break;
+                    error!("> StreamsHandler > send_streams_through_transport > Error while streaming a server stream {err:?}");
+                    return Err(err);
                 }
             }
         }
@@ -580,22 +705,34 @@ impl StreamsHandler {
     }
 
     /// Sends a [`StreamMessage`] through the given transport and registers the created acknowledge listener for the sent message and return it.
+    ///
+    /// If it fails to send the[`StreamMessage`], the function will try to send a [`RemoteError`] to notify the client as long as [`Transport::send`] doesn't return [`TransportError::Closed`]
+    ///
     async fn send_stream<T: Transport + ?Sized>(
         &self,
         transport: Arc<T>,
         message: StreamMessage,
     ) -> Result<OneShotReceiver<Vec<u8>>, CommonError> {
-        let (_, message_id) = parse_message_identifier(message.message_identifier);
+        let (_, message_number) = parse_message_identifier(message.message_identifier);
         let (tx, rx) = oneshot_channel();
         {
             let mut lock = self.ack_listeners.lock().await;
-            lock.insert(format!("{}{}", message_id, message.sequence_id), tx);
+            lock.insert(format!("{}{}", message_number, message.sequence_id), tx);
         }
 
-        transport
-            .send(message.encode_to_vec())
-            .await
-            .map_err(|_| CommonError::TransportError)?;
+        if let Err(error) = transport.send(message.encode_to_vec()).await {
+            error!("> StreamsHandler > send_stream > Error while sending through transport - message: {message:?} - Error: {error:?}");
+            {
+                // Remove the inserted tx in order to drop the channel because it won't be used
+                let mut lock = self.ack_listeners.lock().await;
+                lock.remove(&format!("{}{}", message_number, message.sequence_id));
+            }
+            if !matches!(error, TransportError::Closed) {
+                return Err(CommonError::TransportError);
+            } else {
+                return Err(CommonError::TransportWasClosed);
+            }
+        }
 
         Ok(rx)
     }
@@ -611,19 +748,37 @@ impl StreamsHandler {
                         lock.remove(&format!("{}{}", message_number, stream_message.sequence_id))
                     };
                     match listener {
-                        Some(sender) => sender.send(payload).unwrap(), // TODO: Handle error
+                        Some(sender) => {
+                            if sender.send(payload).is_err() {
+                                error!("> Streams Handler > message_acknowledged_by_peer > Error while sending through the ack listener, seems to be dropped")
+                            }
+                        }
                         None => {
                             debug!("> Streams Handler > message_acknowledged_by_peer > ack listener not found")
                         }
                     }
                 }
                 Ok(None) => {
-                    error!("> Streams Handler > message_acknowledged_by_peer > error on parsing ");
+                    error!("> Streams Handler > message_acknowledged_by_peer > Error on parsing");
                 }
                 Err((_, remote_error)) => {
                     error!("> Streams Handler > message_acknowledged_by_peer > Remote Error: {remote_error:?}")
                 }
             }
         });
+    }
+}
+
+/// Reusable function for sending a remote erorr
+async fn send_remote_error<T: Transport + ?Sized>(
+    transport: Arc<T>,
+    message_number: u32,
+    mut remote_error: RemoteError,
+) {
+    // We have to complete the RemoteError message becaue the message_identifier is 0 because
+    // `message_number` (message_identifier) is not given to the procedure_handler and it's unable to build the identifier
+    fill_remote_error(&mut remote_error, message_number);
+    if let Err(err) = transport.send(remote_error.encode_to_vec()).await {
+        error!("> send_remote_error > Error while sending the remote error through a transport > RemoteError: {remote_error:?} - Error: {err:?}")
     }
 }

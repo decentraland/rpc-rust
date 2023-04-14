@@ -44,6 +44,10 @@ pub enum ServerError {
     ModuleNotFound,
     /// Given procedure's ID was not found
     ProcedureNotFound,
+    /// Unexpexted Error while responding back or Error on sending the original procedure response
+    ///
+    /// This error should be use as a "re-try" when a [`Transport::send`] failed.
+    UnexpectedErrorOnTransport,
 }
 
 impl RemoteErrorResponse for ServerError {
@@ -54,6 +58,7 @@ impl RemoteErrorResponse for ServerError {
             Self::LoadModuleError => 500, // it's unlikely to happen
             Self::ModuleNotFound => 404,
             Self::ProcedureNotFound => 404,
+            Self::UnexpectedErrorOnTransport => 500,
         }
     }
 
@@ -64,6 +69,7 @@ impl RemoteErrorResponse for ServerError {
             Self::LoadModuleError => "Error on loading a module".to_string(),
             Self::ModuleNotFound => "Module wasn't found on the server, check the name".to_string(),
             Self::ProcedureNotFound => "Procedure's ID wasn't found on the server".to_string(),
+            Self::UnexpectedErrorOnTransport => "Error on the transport while sending the original procedure response".to_string()
         }
     }
 }
@@ -75,6 +81,7 @@ pub enum ServerInternalError {
     TransportError,
     TransportNotAttached,
     InvalidHeader,
+    TransportWasClosed,
 }
 
 type TransportID = u32;
@@ -324,7 +331,12 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
         &mut self,
         transports_notifier: UnboundedSender<TransportNotification<T>>,
     ) {
-        let mut events_receiver = self.server_events_receiver.take().unwrap();
+        let mut events_receiver = if let Some(events_receiver) = self.server_events_receiver.take()
+        {
+            events_receiver
+        } else {
+            panic!("> RpcServer > process_server_events > misuse of process_server_events, seems to be called more than one time")
+        };
         tokio::spawn(async move {
             while let Some(event) = events_receiver.recv().await {
                 match event {
@@ -465,7 +477,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                         message_number,
                                         client_stream_id,
                                         procedure_handler(
-                                            stream_protocol.to_generator(|item| item),
+                                            stream_protocol.to_generator(Some),
                                             procedure_ctx,
                                         ),
                                         listener,
@@ -501,7 +513,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                     client_stream_id,
                                     listener,
                                     procedure_handler(
-                                        stream_protocol.to_generator(|item| item),
+                                        stream_protocol.to_generator(Some),
                                         procedure_ctx,
                                     ),
                                 );

@@ -221,24 +221,33 @@ impl Transport for WebSocketTransport {
                     "> WebSocketTransport > Error on sending in a ws connection {}",
                     err.to_string()
                 );
-                Err(TransportError::Internal)
+
+                match err {
+                    tokio_tungstenite::tungstenite::Error::ConnectionClosed
+                    | tokio_tungstenite::tungstenite::Error::AlreadyClosed => {
+                        return Err(TransportError::Closed);
+                    }
+                    _ => return Err(TransportError::Internal),
+                }
             }
             Ok(_) => Ok(()),
         }
     }
 
     async fn close(&self) {
-        match self.write.lock().await.close().await {
-            Ok(_) => {
-                self.ready.store(false, Ordering::SeqCst);
-            }
-            _ => {
-                debug!("> WebSocketTransport > Couldn't close tranport")
+        if self.is_connected() {
+            match self.write.lock().await.close().await {
+                Ok(_) => {
+                    self.ready.store(false, Ordering::SeqCst);
+                }
+                _ => {
+                    debug!("> WebSocketTransport > Couldn't close tranport")
+                }
             }
         }
     }
 
     fn is_connected(&self) -> bool {
-        self.ready.load(Ordering::Relaxed)
+        self.ready.load(Ordering::SeqCst)
     }
 }
