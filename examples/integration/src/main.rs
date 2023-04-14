@@ -1,4 +1,4 @@
-use integration::{BookServiceClient, BookServiceRegistration, RPCServiceClient};
+use integration::{BookServiceClient, BookServiceClientDefinition, BookServiceRegistration};
 use std::sync::Arc;
 use std::{env, time::Duration};
 use tokio::sync::RwLock; // AUTO-GENERATED CODE
