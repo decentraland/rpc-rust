@@ -222,13 +222,14 @@ impl Transport for WebSocketTransport {
                     err.to_string()
                 );
 
-                match err {
-                    tokio_tungstenite::tungstenite::Error::ConnectionClosed
-                    | tokio_tungstenite::tungstenite::Error::AlreadyClosed => {
-                        return Err(TransportError::Closed);
-                    }
-                    _ => return Err(TransportError::Internal),
-                }
+                use tokio_tungstenite::tungstenite::Error::*;
+
+                let error = match err {
+                    ConnectionClosed | AlreadyClosed => TransportError::Closed,
+                    _ => TransportError::Internal,
+                };
+
+                Err(error)
             }
             Ok(_) => Ok(()),
         }
