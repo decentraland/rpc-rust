@@ -1,7 +1,7 @@
 //! Contains the types and functions needed to use the Decentraland RPC implementation.
 pub mod parse;
 // proto file definition doesn't have a package name, so it defaults to "_"
-// TODO: scope the protcolo just to the crate
+// TODO: scope the protcolol just to the crate
 include!(concat!(env!("OUT_DIR"), "/_.rs"));
 
 /// This trait should me implemented by the Error type returned in your server's procedures
