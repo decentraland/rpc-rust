@@ -3,13 +3,12 @@
 //! A [`ServiceModuleDefinition`] is auto-generated when a `.proto` is compiled. And it's filled with the defined procedures.
 //! Actually, you probably don't need to use this module or their types.
 //!
+use crate::{rpc_protocol::RemoteError, stream_protocol::Generator};
 use core::future::Future;
 use std::{collections::HashMap, pin::Pin, sync::Arc};
 
-use crate::stream_protocol::Generator;
-
 /// General type returned by every procedure
-pub type Response<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+pub type Response<T> = Pin<Box<dyn Future<Output = Result<T, RemoteError>> + Send>>;
 
 /// Payload for procedures which don't receive a stream
 pub type CommonPayload = Vec<u8>;
@@ -49,15 +48,26 @@ pub type BiStreamsRequestHandler<Context> =
     dyn Fn(BiStreamsPayload, Arc<Context>) -> BiStreamsResponse + Send + Sync;
 
 /// Type used for storing procedure definitions given by the codegeneration for the RPC service
-pub enum Definition<Context> {
-    /// Store unary procedure definitions
+pub enum ProcedureDefinition<Context> {
+    /// Stores unary procedure definitions. Unary Procedure means a basic request<>response
     Unary(Arc<UnaryRequestHandler<Context>>),
-    /// Store server streams procedure definitions
+    /// Stores server streams procedure definitions. [`crate::client::RpcClient`] sends a request and waits for the [`crate::server::RpcServer`] to send all the data that it has and close the stream opened
     ServerStreams(Arc<ServerStreamsRequestHandler<Context>>),
-    /// Store client strems procedure definitions
+    /// Stores client strems procedure definitions. [`crate::client::RpcClient`] sends a request and opens a stream in the [`crate::server::RpcServer`], then [`crate::server::RpcServer`] waits for [`crate::client::RpcClient`] to send all the payloads
     ClientStreams(Arc<ClientStreamsRequestHandler<Context>>),
-    /// Store bidirectional streams procedure definitions
+    /// Stores bidirectional streams procedure definitions. A stream is opened on both sides (client and server)
     BiStreams(Arc<BiStreamsRequestHandler<Context>>),
+}
+
+impl<Context> Clone for ProcedureDefinition<Context> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Unary(procedure) => Self::Unary(procedure.clone()),
+            Self::ServerStreams(procedure) => Self::ServerStreams(procedure.clone()),
+            Self::ClientStreams(procedure) => Self::ClientStreams(procedure.clone()),
+            Self::BiStreams(procedure) => Self::BiStreams(procedure.clone()),
+        }
+    }
 }
 
 /// It stores all procedures defined for a RPC service
@@ -66,13 +76,13 @@ pub struct ServiceModuleDefinition<Context> {
     ///
     /// the key is the procedure's name and the value is the handler for the procedure
     ///
-    definitions: HashMap<String, Definition<Context>>,
+    procedure_definitions: HashMap<String, ProcedureDefinition<Context>>,
 }
 
 impl<Context> ServiceModuleDefinition<Context> {
     pub fn new() -> Self {
         Self {
-            definitions: HashMap::new(),
+            procedure_definitions: HashMap::new(),
         }
     }
 
@@ -84,7 +94,7 @@ impl<Context> ServiceModuleDefinition<Context> {
         name: &str,
         handler: H,
     ) {
-        self.add_definition(name, Definition::Unary(Arc::new(handler)));
+        self.add_definition(name, ProcedureDefinition::Unary(Arc::new(handler)));
     }
 
     /// Add a server streams procedure handler to the service definition
@@ -95,7 +105,7 @@ impl<Context> ServiceModuleDefinition<Context> {
         name: &str,
         handler: H,
     ) {
-        self.add_definition(name, Definition::ServerStreams(Arc::new(handler)));
+        self.add_definition(name, ProcedureDefinition::ServerStreams(Arc::new(handler)));
     }
 
     /// Add a client streams procedure handler to the service definition
@@ -106,7 +116,7 @@ impl<Context> ServiceModuleDefinition<Context> {
         name: &str,
         handler: H,
     ) {
-        self.add_definition(name, Definition::ClientStreams(Arc::new(handler)));
+        self.add_definition(name, ProcedureDefinition::ClientStreams(Arc::new(handler)));
     }
 
     /// Add a bidirectional streams procedure handler to the service definition
@@ -117,15 +127,16 @@ impl<Context> ServiceModuleDefinition<Context> {
         name: &str,
         handler: H,
     ) {
-        self.add_definition(name, Definition::BiStreams(Arc::new(handler)));
+        self.add_definition(name, ProcedureDefinition::BiStreams(Arc::new(handler)));
     }
 
-    fn add_definition(&mut self, name: &str, definition: Definition<Context>) {
-        self.definitions.insert(name.to_string(), definition);
+    fn add_definition(&mut self, name: &str, definition: ProcedureDefinition<Context>) {
+        self.procedure_definitions
+            .insert(name.to_string(), definition);
     }
 
-    pub fn get_definitions(&self) -> &HashMap<String, Definition<Context>> {
-        &self.definitions
+    pub fn get_definitions(&self) -> &HashMap<String, ProcedureDefinition<Context>> {
+        &self.procedure_definitions
     }
 }
 
