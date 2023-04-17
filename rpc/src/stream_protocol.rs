@@ -95,10 +95,14 @@ impl<T: Transport + ?Sized + 'static> StreamProtocol<T> {
                             ack: true,
                         };
 
-                        self.transport
+                        if let Err(err) = self.transport
                             .send(stream_message.encode_to_vec())
-                            .await
-                            .unwrap();
+                            .await {
+                            log::error!("> StreamProtocol > next > Error while sending the ACK StreamMessage through the transport: {err:?}");
+                            // If the message cannot be ack, we should close the stream
+                            self.is_remote_closed = true;
+                            return None;
+                        }
 
 
                         Some(msg)
@@ -116,17 +120,27 @@ impl<T: Transport + ?Sized + 'static> StreamProtocol<T> {
     ///
     /// It allows to pass a closure to transform the values that the internal [`Generator`] has.
     ///
-    /// It transforms the values and sends it to the returned [`Generator`] in a backgroun taks for a immediate response.
+    /// The transform closure has to return an Option, this allows the user to return None if something failed in the closure or it depends on some condition.
     ///
-    pub fn to_generator<O: Send + Sync + 'static, F: Fn(Vec<u8>) -> O + Send + Sync + 'static>(
+    /// It transforms the values and sends it to the returned [`Generator`] in a background task for a immediate response.
+    ///
+    pub fn to_generator<
+        O: Send + Sync + 'static,
+        F: Fn(Vec<u8>) -> Option<O> + Send + Sync + 'static,
+    >(
         mut self,
         transformer: F,
     ) -> Generator<O> {
         let (generator, generator_yielder) = Generator::create();
         tokio::spawn(async move {
             while let Some(item) = self.next().await {
-                let new_item = transformer(item);
-                generator_yielder.r#yield(new_item).await.unwrap();
+                if let Some(item_decoded) = transformer(item) {
+                    if generator_yielder.r#yield(item_decoded).await.is_err() {
+                        log::error!("> StreamProtocol > to_generator > Generator > error r#yield, probably it's closed");
+                        log::debug!("> StreamProtocol > to_generator > Generator > breaking to stop yielding");
+                        break; // channel is closed
+                    }
+                }
             }
         });
 
@@ -203,18 +217,19 @@ impl<T: Transport + ?Sized + 'static> StreamProtocol<T> {
         internal_channel_sender: GeneratorYielder<Vec<u8>>,
         cancellation_token: CancellationToken,
     ) {
-        while let Ok(message) = messages_processor.recv().await {
-            if matches!(message.0, RpcMessageTypes::StreamMessage) {
-                if message.2.closed {
+        while let Ok((message_type, _, stream_message)) = messages_processor.recv().await {
+            if matches!(message_type, RpcMessageTypes::StreamMessage) {
+                if stream_message.closed {
                     cancellation_token.cancel();
                     messages_processor.close();
-                } else {
-                    internal_channel_sender
-                        .r#yield(message.2.payload)
-                        .await
-                        .unwrap();
+                } else if internal_channel_sender
+                    .r#yield(stream_message.payload)
+                    .await
+                    .is_err()
+                {
+                    log::error!("> StreamProtocol > process_messages > Error on sending through the Generator, seems to be dropped")
                 }
-            } else if matches!(message.0, RpcMessageTypes::RemoteErrorResponse) {
+            } else if matches!(message_type, RpcMessageTypes::RemoteErrorResponse) {
                 cancellation_token.cancel();
                 messages_processor.close();
                 // TOOD: Communicate error
@@ -226,6 +241,10 @@ impl<T: Transport + ?Sized + 'static> StreamProtocol<T> {
 /// Errors related with [`Generator`] and [`GeneratorYielder`]
 #[derive(Debug)]
 pub enum GeneratorError {
+    /// The underlying channel is closed, if it was unable to insert.
+    ///
+    /// So if this error appears, it's due to a closed channel. We must stop doing [`GeneratorYielder::r#yield`]
+    ///
     UnableToInsert,
 }
 
@@ -242,16 +261,32 @@ impl<M: Send + Sync + 'static> Generator<M> {
         (Self(channel.1), GeneratorYielder::new(channel.0))
     }
 
-    // TODO: could it be a trait and reuse for other structs? or replace it with From trait
-    pub fn from_generator<O: Send + Sync + 'static, F: Fn(M) -> O + Send + Sync + 'static>(
+    // TODO: could it be a trait and reuse for other structs?
+    /// This functions takes a owned [`Generator`] to turn the items in that generator into another ones
+    /// but keeping the items in a generator.
+    ///
+    /// It allows to pass a closure to transform the values in the old [`Generator`].
+    ///
+    /// The transform closure has to return an Option, this allows the user to return None if something failed in the closure or it depends on some condition.
+    ///
+    /// It transforms the values and sends it to the returned [`Generator`] in a background task for a immediate response.
+    pub fn from_generator<
+        O: Send + Sync + 'static,
+        F: Fn(M) -> Option<O> + Send + Sync + 'static,
+    >(
         mut old_generator: Generator<M>,
         transformer: F,
     ) -> Generator<O> {
         let (generator, generator_yielder) = Generator::create();
         tokio::spawn(async move {
             while let Some(item) = old_generator.next().await {
-                let new_item = transformer(item);
-                generator_yielder.r#yield(new_item).await.unwrap();
+                if let Some(new_item) = transformer(item) {
+                    if generator_yielder.r#yield(new_item).await.is_err() {
+                        log::error!("> Generator > error r#yield, probably it's closed");
+                        log::debug!("> Generator > breaking to stop yielding");
+                        break; // channel is closed
+                    }
+                }
             }
         });
 

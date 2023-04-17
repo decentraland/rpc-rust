@@ -2,22 +2,20 @@
 //!
 //! The client is in charge of sending messages and procedure requests to the [`RpcServer`](crate::server::RpcServer)
 //!
-use std::{collections::HashMap, sync::Arc};
-
-use log::debug;
-use prost::Message;
-use tokio::sync::{oneshot, Mutex};
-
 use crate::{
     messages_handlers::ClientMessagesHandler,
     rpc_protocol::{
-        parse::{build_message_identifier, parse_protocol_message},
-        CreatePort, CreatePortResponse, Request, RequestModule, RequestModuleResponse, Response,
-        RpcMessageTypes,
+        parse::{build_message_identifier, parse_protocol_message, ParseErrors},
+        CreatePort, CreatePortResponse, RemoteError, Request, RequestModule, RequestModuleResponse,
+        Response, RpcMessageTypes, StreamMessage,
     },
     stream_protocol::{Generator, StreamProtocol},
     transports::{Transport, TransportEvent},
 };
+use log::debug;
+use prost::Message;
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::{oneshot, Mutex};
 
 /// Trait should be implemented by a type that acts as the client of your service.
 ///
@@ -27,24 +25,32 @@ pub trait ServiceClient<T: Transport> {
     fn set_client_module(client_module: RpcClientModule<T>) -> Self;
 }
 
-/// Type returned by all functions related to the [`RpcClient`], [`RpcClientPort`], [`RpcClientModule`]
-pub type ClientResult<T> = Result<T, ClientError>;
-
-/// Error produced by the [`RpcClient`], [`RpcClientPort`], [`RpcClientModule`]
+/// Error produced on the client side
 #[derive(Debug)]
 pub enum ClientError {
-    /// Parsing error
+    /// Error on decoding bytes (`Vec<u8>`) into a given type using [`crate::rpc_protocol::parse::parse_protocol_message`]
     ProtocolError,
-    /// Error in the transport
+    /// Error in the transport on the client side
     TransportError,
-    /// Transport not attached so it's unable to communicate with the [`RpcServer`](crate::server::RpcServer)
-    TransportNotAttached,
-    /// Error on the [`RpcClientPort`] creation
-    PortCreationError,
-    /// Given procedure id not found
-    ProcedureNotFound,
-    UnknownError,
+    /// Given procedure id was not found in the Client state. Client state was filled by the server.
+    ProcedureNotExists,
+    /// Error that it's not supossed to happen
+    UnexpectedError(String),
+    /// A Port with the given name already exists
+    PortNameAlreadyExists,
 }
+
+#[derive(Debug)]
+/// Error returned by the client could be an error caused on the server side ([`ResultError::Remote`]) or a error caused on the client side ([`ResultError::Client`])
+pub enum ClientResultError {
+    /// A `ResultError::Client` could be caused by misusing the Client interface, or a failure in the client side of a transport.
+    Client(ClientError),
+    /// A `ResultError::Remote` could be caused by an error on a server procedure, a request to the server or a failure in the server side of a transport.
+    Remote(RemoteError),
+}
+
+/// Type returned by all functions which their returned errors are caused on the client side
+pub type ClientResult<T> = Result<T, ClientResultError>;
 
 /// RpcClient is in charge of creating ports, requesting modules, and sending requests to the [`RpcServer`](crate::server::RpcServer)
 ///
@@ -82,17 +88,23 @@ impl<T: Transport + 'static> RpcClient<T> {
         transport
             .send(vec![0])
             .await
-            .map_err(|_| ClientError::TransportError)?;
+            .map_err(|_| ClientResultError::Client(ClientError::TransportError))?;
 
         match transport.receive().await {
             Ok(TransportEvent::Connect) => Ok(transport),
-            _ => Err(ClientError::TransportError),
+            _ => Err(ClientResultError::Client(ClientError::TransportError)),
         }
     }
 
     /// Sends a request to the [`RpcServer`](crate::server::RpcServer)  in order to create a new port for the `RpcClient`
     pub async fn create_port(&mut self, port_name: &str) -> ClientResult<&RpcClientPort<T>> {
-        let response = self
+        if self.ports.contains_key(port_name) {
+            return Err(ClientResultError::Client(
+                ClientError::PortNameAlreadyExists,
+            ));
+        }
+
+        let (_message_type, _message_number, create_port_response) = self
             .client_request_dispatcher
             .request::<CreatePortResponse, _, _>(|message_id| CreatePort {
                 message_identifier: build_message_identifier(
@@ -105,13 +117,16 @@ impl<T: Transport + 'static> RpcClient<T> {
 
         let rpc_client_port = RpcClientPort::new(
             port_name,
-            response.2.port_id,
+            create_port_response.port_id,
             self.client_request_dispatcher.clone(),
         );
 
-        self.ports.insert(port_name.to_string(), rpc_client_port);
+        let port = self
+            .ports
+            .entry(port_name.to_string())
+            .or_insert(rpc_client_port);
 
-        Ok(self.ports.get(port_name).unwrap())
+        Ok(port)
     }
 }
 
@@ -147,7 +162,11 @@ impl<T: Transport> RpcClientPort<T> {
     ///
     /// It returns a `impl ServiceClient` that should auto generated by the codegen
     pub async fn load_module<S: ServiceClient<T>>(&self, module_name: &str) -> ClientResult<S> {
-        let response: (u32, u32, RequestModuleResponse) = self
+        let (_message_type, _message_number, request_module_response): (
+            u32,
+            u32,
+            RequestModuleResponse,
+        ) = self
             .client_request_dispatcher
             .request(|message_id| RequestModule {
                 port_id: self.port_id,
@@ -161,7 +180,7 @@ impl<T: Transport> RpcClientPort<T> {
 
         let mut procedures = HashMap::new();
 
-        for procedure in response.2.procedures {
+        for procedure in request_module_response.procedures {
             let (procedure_name, procedure_id) = (procedure.procedure_name, procedure.procedure_id);
 
             procedures.insert(procedure_name.to_string(), procedure_id);
@@ -169,7 +188,7 @@ impl<T: Transport> RpcClientPort<T> {
 
         let client_module = RpcClientModule::new(
             module_name,
-            response.2.port_id,
+            request_module_response.port_id,
             procedures,
             self.client_request_dispatcher.clone(),
         );
@@ -223,7 +242,7 @@ impl<T: Transport> RpcClientModule<T> {
         let response: (u32, u32, Response) = self.call_procedure(procedure_name, payload).await?;
 
         let returned_type = ReturnType::decode(response.2.payload.as_slice())
-            .map_err(|_| ClientError::ProtocolError)?;
+            .map_err(|_| ClientResultError::Client(ClientError::ProtocolError))?;
 
         Ok(returned_type)
     }
@@ -237,14 +256,21 @@ impl<T: Transport> RpcClientModule<T> {
         procedure_name: &str,
         payload: M,
     ) -> ClientResult<Generator<ReturnType>> {
-        let response: (u32, u32, Response) = self.call_procedure(procedure_name, payload).await?;
+        let (_message_type, message_number, _procedure_response): (u32, u32, StreamMessage) =
+            self.call_procedure(procedure_name, payload).await?;
         let stream_protocol = self
             .client_request_dispatcher
-            .stream_server_messages(self.port_id, response.1)
+            .stream_server_messages(self.port_id, message_number)
             .await?;
 
         let generator =
-            stream_protocol.to_generator(|item| ReturnType::decode(item.as_slice()).unwrap());
+            stream_protocol.to_generator(|item| match ReturnType::decode(item.as_slice()) {
+                Ok(item_decoded) => Some(item_decoded),
+                Err(_) => {
+                    log::error!("> RpcClient > call_server_streams_procedure > StreamProtocol::to_generator > Error on decoding the ReturnType");
+                    None
+                }
+            });
 
         Ok(generator)
     }
@@ -264,7 +290,7 @@ impl<T: Transport> RpcClientModule<T> {
             .await;
 
         let procedure_id = self.get_procedure_id(procedure_name)?;
-        let response: (u32, u32, Response) = self
+        let (_message_type, _message_number, procedure_response): (u32, u32, Response) = self
             .client_request_dispatcher
             .request(|message_id| Request {
                 port_id: self.port_id,
@@ -278,8 +304,8 @@ impl<T: Transport> RpcClientModule<T> {
             })
             .await?;
 
-        let returned_type = ReturnType::decode(response.2.payload.as_slice())
-            .map_err(|_| ClientError::ProtocolError)?;
+        let returned_type = ReturnType::decode(procedure_response.payload.as_slice())
+            .map_err(|_| ClientResultError::Client(ClientError::ProtocolError))?;
 
         Ok(returned_type)
     }
@@ -318,8 +344,13 @@ impl<T: Transport> RpcClientModule<T> {
             .stream_server_messages(self.port_id, response.1)
             .await?;
 
-        let generator =
-            stream_protocol.to_generator(|item| ReturnType::decode(item.as_slice()).unwrap());
+        let generator = stream_protocol.to_generator(|item| {
+            if let Ok(item_decoded) = ReturnType::decode(item.as_slice()) {
+                Some(item_decoded)
+            } else {
+                None
+            }
+        });
 
         Ok(generator)
     }
@@ -352,10 +383,10 @@ impl<T: Transport> RpcClientModule<T> {
     /// It gets the procedure id given by the server by a procedure name
     fn get_procedure_id(&self, procedure_name: &str) -> ClientResult<u32> {
         let procedure_id = self.procedures.get(procedure_name);
-        if procedure_id.is_none() {
-            return Err(ClientError::ProcedureNotFound);
+        if let Some(procedure_id) = procedure_id {
+            return Ok(procedure_id.to_owned());
         }
-        Ok(procedure_id.unwrap().to_owned())
+        Err(ClientResultError::Client(ClientError::ProcedureNotExists))
     }
 }
 
@@ -415,7 +446,7 @@ impl<T: Transport + 'static> ClientRequestDispatcher<T> {
             .transport
             .send(payload)
             .await
-            .map_err(|_| ClientError::TransportError)?;
+            .map_err(|_| ClientResultError::Client(ClientError::TransportError))?;
 
         let (tx, rx) = oneshot::channel::<Vec<u8>>();
 
@@ -423,11 +454,16 @@ impl<T: Transport + 'static> ClientRequestDispatcher<T> {
             .register_one_time_listener(current_request_message_id, tx)
             .await;
 
-        let response = rx.await.map_err(|_| ClientError::TransportError)?;
+        let response = rx
+            .await
+            .map_err(|_| ClientResultError::Client(ClientError::TransportError))?;
 
         match parse_protocol_message::<ReturnType>(&response) {
-            Some(result) => Ok(result),
-            None => Err(ClientError::ProtocolError),
+            Ok(result) => Ok(result),
+            Err(ParseErrors::IsARemoteError((_, remote_error))) => {
+                Err(ClientResultError::Remote(remote_error))
+            }
+            _ => Err(ClientResultError::Client(ClientError::ProtocolError)),
         }
     }
 
@@ -438,28 +474,31 @@ impl<T: Transport + 'static> ClientRequestDispatcher<T> {
     async fn stream_server_messages(
         &self,
         port_id: u32,
-        message_id: u32,
+        message_number: u32,
     ) -> ClientResult<StreamProtocol<T>> {
-        let stream_protocol =
-            StreamProtocol::new(self.messages_handler.transport.clone(), port_id, message_id);
+        let stream_protocol = StreamProtocol::new(
+            self.messages_handler.transport.clone(),
+            port_id,
+            message_number,
+        );
 
         let client_messages_handler_listener_removal = self.messages_handler.clone();
         match stream_protocol
             .start_processing(move || async move {
                 // Callback for remove listener
                 client_messages_handler_listener_removal
-                    .unregister_listener(message_id)
+                    .unregister_listener(message_number)
                     .await;
             })
             .await
         {
             Ok(listener) => {
                 self.messages_handler
-                    .register_listener(message_id, listener)
+                    .register_listener(message_number, listener)
                     .await;
                 Ok(stream_protocol)
             }
-            Err(_) => Err(ClientError::TransportError),
+            Err(_) => Err(ClientResultError::Client(ClientError::TransportError)),
         }
     }
 

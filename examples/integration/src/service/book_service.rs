@@ -2,16 +2,19 @@ use crate::{
     Book, BookServiceServer, ClientStreamRequest, GetBookRequest, MyExampleContext,
     QueryBooksRequest, ServerStreamResponse,
 };
+use dcl_rpc::{rpc_protocol::RemoteErrorResponse, stream_protocol::Generator};
 use std::{sync::Arc, time::Duration};
-
-use dcl_rpc::stream_protocol::Generator;
 use tokio::time::sleep;
 
 pub struct MyBookService {}
 
 #[async_trait::async_trait]
-impl BookServiceServer<MyExampleContext> for MyBookService {
-    async fn send_book(&self, book: Book, ctx: Arc<MyExampleContext>) {
+impl BookServiceServer<MyExampleContext, BookServiceError> for MyBookService {
+    async fn send_book(
+        &self,
+        book: Book,
+        ctx: Arc<MyExampleContext>,
+    ) -> Result<(), BookServiceError> {
         let mut books = ctx.hardcoded_database.write().await;
 
         // Simulate DB operation
@@ -22,17 +25,23 @@ impl BookServiceServer<MyExampleContext> for MyBookService {
         sleep(Duration::from_secs(2)).await;
 
         books.push(book);
+
+        Ok(())
     }
 
-    async fn get_sample_book(&self, _ctx: Arc<MyExampleContext>) -> Book {
-        Book {
+    async fn get_sample_book(&self, _ctx: Arc<MyExampleContext>) -> Result<Book, BookServiceError> {
+        Ok(Book {
             author: "mr jobs".to_string(),
             title: "Rust: how do futures work under the hood?".to_string(),
             isbn: 1001,
-        }
+        })
     }
 
-    async fn get_book(&self, request: GetBookRequest, ctx: Arc<MyExampleContext>) -> Book {
+    async fn get_book(
+        &self,
+        request: GetBookRequest,
+        ctx: Arc<MyExampleContext>,
+    ) -> Result<Book, BookServiceError> {
         let books = ctx.hardcoded_database.read().await;
 
         // Simulate DB operation
@@ -41,22 +50,27 @@ impl BookServiceServer<MyExampleContext> for MyBookService {
             request.isbn
         );
         sleep(Duration::from_secs(2)).await;
-        let book = books
+        match books
             .iter()
-            .find(|book_record| book_record.isbn == request.isbn);
-        println!(
-            "> BookService > async get_book {} > after simulating DB operation",
-            request.isbn
-        );
+            .find(|book_record| book_record.isbn == request.isbn)
+        {
+            Some(book) => {
+                println!(
+                    "> BookService > async get_book {} > after simulating DB operation",
+                    request.isbn
+                );
 
-        book.map(Book::clone).unwrap_or_default()
+                Ok(book.clone())
+            }
+            None => Err(BookServiceError::BookNotFound),
+        }
     }
 
     async fn query_books(
         &self,
         request: QueryBooksRequest,
         ctx: Arc<MyExampleContext>,
-    ) -> ServerStreamResponse<Book> {
+    ) -> Result<ServerStreamResponse<Book>, BookServiceError> {
         println!("> BookService > server stream > QueryBooks");
         let (generator, generator_yielder) = Generator::create();
         // Spawn for a quick response
@@ -70,26 +84,26 @@ impl BookServiceServer<MyExampleContext> for MyBookService {
             }
         });
 
-        generator
+        Ok(generator)
     }
 
     async fn get_book_stream(
         &self,
         mut request: ClientStreamRequest<GetBookRequest>,
         ctx: Arc<MyExampleContext>,
-    ) -> Book {
+    ) -> Result<Book, BookServiceError> {
         let books = ctx.hardcoded_database.read().await;
 
         while request.next().await.is_some() {}
 
-        books[0].clone()
+        Ok(books[0].clone())
     }
 
     async fn query_books_stream(
         &self,
         mut request: ClientStreamRequest<GetBookRequest>,
         ctx: Arc<MyExampleContext>,
-    ) -> ServerStreamResponse<Book> {
+    ) -> Result<ServerStreamResponse<Book>, BookServiceError> {
         println!("> BookService > bidir stream > QueryBooksStream");
         let (generator, generator_yielder) = Generator::create();
         // Spawn for a quick response
@@ -103,6 +117,24 @@ impl BookServiceServer<MyExampleContext> for MyBookService {
                 }
             }
         });
-        generator
+        Ok(generator)
+    }
+}
+
+pub enum BookServiceError {
+    BookNotFound,
+}
+
+impl RemoteErrorResponse for BookServiceError {
+    fn error_code(&self) -> u32 {
+        match self {
+            Self::BookNotFound => 404,
+        }
+    }
+
+    fn error_message(&self) -> String {
+        match self {
+            Self::BookNotFound => "Book wasn't found".to_string(),
+        }
     }
 }

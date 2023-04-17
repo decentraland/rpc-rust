@@ -194,40 +194,61 @@ impl Transport for WebSocketTransport {
                     return Ok(message);
                 } else {
                     // Ignore messages that are not binary
-                    error!("Received message is not binary");
+                    error!("> WebSocketTransport > Received message is not binary");
                     return Err(TransportError::Internal);
                 }
             }
             Ok(_) => {
-                debug!("Nothing yet")
+                debug!("> WebSocketTransport > Nothing yet")
             }
-            _ => {
-                error!("Failed to receive message");
+            Err(err) => {
+                error!(
+                    "> WebSocketTransport > Failed to receive message {}",
+                    err.to_string()
+                );
             }
         }
-        debug!("Closing transport...");
+        debug!("> WebSocketTransport > Closing transport...");
         self.close().await;
         Ok(TransportEvent::Close)
     }
 
     async fn send(&self, message: Vec<u8>) -> Result<(), TransportError> {
         let message = Message::binary(message);
-        self.write.lock().await.send(message).await?;
-        Ok(())
+        match self.write.lock().await.send(message).await {
+            Err(err) => {
+                error!(
+                    "> WebSocketTransport > Error on sending in a ws connection {}",
+                    err.to_string()
+                );
+
+                use tokio_tungstenite::tungstenite::Error::*;
+
+                let error = match err {
+                    ConnectionClosed | AlreadyClosed => TransportError::Closed,
+                    _ => TransportError::Internal,
+                };
+
+                Err(error)
+            }
+            Ok(_) => Ok(()),
+        }
     }
 
     async fn close(&self) {
-        match self.write.lock().await.close().await {
-            Ok(_) => {
-                self.ready.store(false, Ordering::SeqCst);
-            }
-            _ => {
-                debug!("Couldn't close tranport")
+        if self.is_connected() {
+            match self.write.lock().await.close().await {
+                Ok(_) => {
+                    self.ready.store(false, Ordering::SeqCst);
+                }
+                _ => {
+                    debug!("> WebSocketTransport > Couldn't close tranport")
+                }
             }
         }
     }
 
     fn is_connected(&self) -> bool {
-        self.ready.load(Ordering::Relaxed)
+        self.ready.load(Ordering::SeqCst)
     }
 }
