@@ -34,7 +34,7 @@ pub type ServerResult<T> = Result<T, ServerResultError>;
 /// Enum of errors which should be exposed to the client and turned into a [`crate::rpc_protocol::RemoteError`]
 #[derive(Debug)]
 pub enum ServerError {
-    /// Error on decoding bytes (`Vec<u8>`) into a given type using [`crate::rpc_protocol::parse::parse_protocol_message`]
+    /// Error on decoding bytes (`Vec<u8>`) into a given type using [`crate::rpc_protocol::parse::parse_protocol_message`] or using the [`Message::decode`]
     ProtocolError,
     /// Port was not found in the server state, possibly not created
     PortNotFound,

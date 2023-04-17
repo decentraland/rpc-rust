@@ -6,7 +6,7 @@ use crate::{
     rpc_protocol::{
         parse::{
             build_message_identifier, fill_remote_error, parse_header, parse_message_identifier,
-            parse_protocol_message,
+            parse_protocol_message, ParseErrors,
         },
         RemoteError, Response, RpcMessageTypes, StreamMessage,
     },
@@ -741,7 +741,7 @@ impl StreamsHandler {
     pub fn message_acknowledged_by_peer(self: Arc<Self>, message_number: u32, payload: Vec<u8>) {
         tokio::spawn(async move {
             match parse_protocol_message::<StreamMessage>(&payload) {
-                Ok(Some((_, _, stream_message))) => {
+                Ok((_, _, stream_message)) => {
                     let listener = {
                         let mut lock = self.ack_listeners.lock().await;
                         // we should remove ack listener it just for a seq_id
@@ -758,11 +758,11 @@ impl StreamsHandler {
                         }
                     }
                 }
-                Ok(None) => {
-                    error!("> Streams Handler > message_acknowledged_by_peer > Error on parsing");
-                }
-                Err((_, remote_error)) => {
+                Err(ParseErrors::IsARemoteError((_, remote_error))) => {
                     error!("> Streams Handler > message_acknowledged_by_peer > Remote Error: {remote_error:?}")
+                }
+                Err(err) => {
+                    error!("> Streams Handler > message_acknowledged_by_peer > Error on parsing: {err:?}");
                 }
             }
         });

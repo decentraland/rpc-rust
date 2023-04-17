@@ -5,7 +5,7 @@
 use crate::{
     messages_handlers::ClientMessagesHandler,
     rpc_protocol::{
-        parse::{build_message_identifier, parse_protocol_message},
+        parse::{build_message_identifier, parse_protocol_message, ParseErrors},
         CreatePort, CreatePortResponse, RemoteError, Request, RequestModule, RequestModuleResponse,
         Response, RpcMessageTypes, StreamMessage,
     },
@@ -121,16 +121,12 @@ impl<T: Transport + 'static> RpcClient<T> {
             self.client_request_dispatcher.clone(),
         );
 
-        self.ports.insert(port_name.to_string(), rpc_client_port);
+        let port = self
+            .ports
+            .entry(port_name.to_string())
+            .or_insert(rpc_client_port);
 
-        if let Some(port) = self.ports.get(port_name) {
-            Ok(port)
-        } else {
-            // We prefer to do this instead of a `.unwrap()` even it's safe to do it (like here)
-            Err(ClientResultError::Client(ClientError::UnexpectedError(
-                "Error on getting the port, seems not to be in the client state.".to_string(),
-            )))
-        }
+        Ok(port)
     }
 }
 
@@ -463,9 +459,11 @@ impl<T: Transport + 'static> ClientRequestDispatcher<T> {
             .map_err(|_| ClientResultError::Client(ClientError::TransportError))?;
 
         match parse_protocol_message::<ReturnType>(&response) {
-            Ok(Some(result)) => Ok(result),
-            Ok(None) => Err(ClientResultError::Client(ClientError::ProtocolError)),
-            Err((_, remote_error)) => Err(ClientResultError::Remote(remote_error)),
+            Ok(result) => Ok(result),
+            Err(ParseErrors::IsARemoteError((_, remote_error))) => {
+                Err(ClientResultError::Remote(remote_error))
+            }
+            _ => Err(ClientResultError::Client(ClientError::ProtocolError)),
         }
     }
 

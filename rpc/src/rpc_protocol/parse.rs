@@ -30,7 +30,24 @@ pub fn parse_header(data: &[u8]) -> Option<(RpcMessageTypes, u32)> {
     Some((rpc_message_type, message_number))
 }
 
-type ParseMessageResult<R> = Result<Option<(u32, u32, R)>, (u32, RemoteError)>;
+/// Errors produced by [`parse_protocol_message`]
+#[derive(Debug)]
+pub enum ParseErrors {
+    /// Found a RemoteError message instead of the given type parameter
+    IsARemoteError((u32, RemoteError)),
+    /// The bytes failed decoding into the given type
+    DecodingFailed,
+    /// It's an error when the [`RpcMessageHeader`] has: [`RpcMessageTypes::Empty`] or
+    /// [`RpcMessageTypes::ServerReady`] as `message_type` in its identifier. These message types don't have
+    /// a message itself, they come as a [`RpcMessageHeader`]
+    NotMessageType,
+    /// The function, first, tries to decode the bytes into [`RpcMessageHeader`] to get the `message_type` and `message_number`
+    ///
+    /// If it fails, the bytes are fully invalid.
+    InvalidHeader,
+}
+
+type ParseMessageResult<R> = Result<(u32, u32, R), ParseErrors>;
 
 /// Parse protocol message from bytes
 ///
@@ -47,17 +64,22 @@ type ParseMessageResult<R> = Result<Option<(u32, u32, R)>, (u32, RemoteError)>;
 pub fn parse_protocol_message<R: Message + Default>(data: &[u8]) -> ParseMessageResult<R> {
     let (message_type, message_number) = match parse_header(data) {
         Some(header) => header,
-        None => return Ok(None),
+        None => return Err(ParseErrors::InvalidHeader),
     };
 
     if matches!(message_type, RpcMessageTypes::RemoteErrorResponse) {
         match RemoteError::decode(data) {
-            Ok(remote_error) => return Err((message_number, remote_error)),
+            Ok(remote_error) => {
+                return Err(ParseErrors::IsARemoteError((message_number, remote_error)))
+            }
             Err(_) => {
                 let mut remote_error_default = RemoteError::default();
                 fill_remote_error(&mut remote_error_default, message_number);
 
-                return Err((message_number, remote_error_default));
+                return Err(ParseErrors::IsARemoteError((
+                    message_number,
+                    remote_error_default,
+                )));
             }
         }
     }
@@ -66,14 +88,14 @@ pub fn parse_protocol_message<R: Message + Default>(data: &[u8]) -> ParseMessage
         message_type,
         RpcMessageTypes::Empty | RpcMessageTypes::ServerReady
     ) {
-        return Ok(None);
+        return Err(ParseErrors::NotMessageType);
     }
 
     let message = R::decode(data);
 
     match message {
-        Ok(message) => Ok(Some((message_type as u32, message_number, message))),
-        Err(_) => Ok(None),
+        Ok(message) => Ok((message_type as u32, message_number, message)),
+        Err(_) => Err(ParseErrors::DecodingFailed),
     }
 }
 
@@ -95,7 +117,7 @@ mod tests {
     use crate::rpc_protocol::*;
     use prost::Message;
 
-    use super::{build_message_identifier, parse_message_identifier, parse_protocol_message};
+    use super::{build_message_identifier, parse_protocol_message};
 
     #[test]
     fn test_parse_protocol_message() {
@@ -108,8 +130,6 @@ mod tests {
 
         let parse_back = parse_protocol_message::<CreatePortResponse>(&vec).unwrap();
 
-        assert!(parse_back.is_some());
-        let parse_back = parse_back.unwrap();
         assert_eq!(parse_back.0, RpcMessageTypes::CreatePort as u32);
         // parse_protocol_message dont add the port_id, just parse it
         assert_eq!(parse_back.2.port_id, 0);
@@ -128,15 +148,12 @@ mod tests {
         let vec = remote_error.encode_to_vec();
 
         let parse_back = parse_protocol_message::<CreatePortResponse>(&vec).unwrap_err();
-        // unwrap_err because it has to be an error because the actual message is a RemoteError
-        assert_eq!(parse_back.0, 1);
-        assert_eq!(parse_back.1.error_code, 400);
-        assert_eq!(parse_back.1.error_message, "Bad request error");
-    }
-
-    #[test]
-    fn get_tuple() {
-        let tuple = parse_message_identifier(1207959556);
-        println!("{tuple:?}")
+        match parse_back {
+            parse::ParseErrors::IsARemoteError((message_number, remote_error_produced)) => {
+                assert_eq!(message_number, 1);
+                assert_eq!(remote_error, remote_error_produced);
+            }
+            _ => panic!(),
+        }
     }
 }
