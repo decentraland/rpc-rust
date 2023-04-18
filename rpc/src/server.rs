@@ -53,12 +53,12 @@ pub enum ServerError {
 impl RemoteErrorResponse for ServerError {
     fn error_code(&self) -> u32 {
         match self {
-            Self::ProtocolError => 400,
-            Self::PortNotFound => 404,
-            Self::LoadModuleError => 500, // it's unlikely to happen
-            Self::ModuleNotFound => 404,
-            Self::ProcedureNotFound => 404,
-            Self::UnexpectedErrorOnTransport => 500,
+            Self::ProtocolError => 0,
+            Self::PortNotFound => 1,
+            Self::LoadModuleError => 2, // it's unlikely to happen
+            Self::ModuleNotFound => 3,
+            Self::ProcedureNotFound => 4,
+            Self::UnexpectedErrorOnTransport => 5,
         }
     }
 
@@ -246,7 +246,6 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                 .await
                                 .expect("expect to be able to connect");
                         }
-                        TransportEvent::Error(err) => error!("Transport error {}", err),
                         TransportEvent::Message(payload) => match parse_header(&payload) {
                             Some((message_type, message_number)) => {
                                 match self
@@ -258,7 +257,9 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                     )
                                     .await
                                 {
-                                    Ok(_) => debug!("Transport message handled!"),
+                                    Ok(_) => {
+                                        debug!("> RpcServer > run > Transport message handled!")
+                                    }
                                     Err(server_error) => match server_error {
                                         ServerResultError::External(server_external_error) => {
                                             error!("> RpcServer > Server External Error {server_external_error:?}");
@@ -275,26 +276,28 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                                     .await
                                                     .is_err()
                                                 {
-                                                    error!("> RpcServer > Error on sending the a RemoteError to the client {remote_error:?}")
+                                                    error!("> RpcServer > run > Error on sending the a RemoteError to the client {remote_error:?}")
                                                 }
                                             });
                                         }
                                         ServerResultError::Internal(server_internal_error) => {
-                                            error!("> RpcServer > Server Internal Error: {server_internal_error:?}")
+                                            error!("> RpcServer > run > Server Internal Error: {server_internal_error:?}")
                                         }
                                     },
                                 }
                             }
                             None => {
-                                error!("> RpcServer > A Invalid Header was sent by the client, message ignored");
+                                error!("> RpcServer > run > A Invalid Header was sent by the client, message ignored");
                                 continue;
                             }
                         },
+                        TransportEvent::Error(err) => {
+                            error!("> RpcServer > run > Transport error {}", err)
+                        }
                         _ => continue,
                     },
                     TransportNotification::NewErrorMessage((_, error)) => {
-                        // TODO: Send error?
-                        error!("> RpcServer > Error on transport {error:?}");
+                        error!("> RpcServer > run > Error on transport {error:?}");
                         continue;
                     }
                     TransportNotification::MustAttachTransport(transport) => {
