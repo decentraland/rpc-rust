@@ -2,6 +2,8 @@
 //!
 //! The Decentraland RPC implementation uses protobuf for the messages format and uses whatever transport or wire that meet the requirements of the [`Transport`] trait.
 //!
+use std::sync::Arc;
+
 use async_trait::async_trait;
 
 pub mod error;
@@ -40,6 +42,7 @@ pub enum TransportError {
 
 #[async_trait]
 pub trait Transport: Send + Sync {
+    type Context;
     async fn receive(&self) -> Result<TransportEvent, TransportError>;
     async fn send(&self, message: Vec<u8>) -> Result<(), TransportError>;
     async fn close(&self);
@@ -52,4 +55,8 @@ pub trait Transport: Send + Sync {
     }
 
     fn is_connected(&self) -> bool;
+
+    fn context(&self) -> Option<Arc<Self::Context>> {
+        None
+    }
 }

@@ -142,7 +142,7 @@ impl RPCServiceGenerator {
 
     fn generate_server_trait(&self, service: &Service, buf: &mut String) {
         buf.push_str("use std::sync::Arc;\n");
-        buf.push_str("use dcl_rpc::rpc_protocol::{RemoteErrorResponse};\n");
+        buf.push_str("use dcl_rpc::{rpc_protocol::{RemoteErrorResponse}, service_module_definition::ProcedureContext};\n");
         // This is done with strings rather than tokens because Prost provides functions that
         // return doc comments as strings.
         buf.push('\n');
@@ -150,7 +150,7 @@ impl RPCServiceGenerator {
 
         buf.push_str("#[async_trait::async_trait]\n");
         buf.push_str(&format!(
-            "pub trait {}<Context, Error: RemoteErrorResponse>: Send + Sync + 'static {{",
+            "pub trait {}<ServerContext, TransportContext, Error: RemoteErrorResponse>: Send + Sync + 'static {{",
             self.get_server_service_name(service)
         ));
         for method in service.methods.iter() {
@@ -324,11 +324,12 @@ impl RPCServiceGenerator {
         }
         quote! {
         pub fn register_service<
-                S: #trait_name<Context, Error> + Send + Sync + 'static,
-                Context: Send + Sync + 'static,
+                S: #trait_name<ServerContext, TransportContext, Error> + Send + Sync + 'static,
+                ServerContext: Send + Sync + 'static,
+                TransportContext: Send + Sync + 'static,
                 Error: RemoteErrorResponse + Send + Sync + 'static
             >(
-                port: &mut RpcServerPort<Context>,
+                port: &mut RpcServerPort<ServerContext, TransportContext>,
                 service: S
             ) {
                 let mut service_def = ServiceModuleDefinition::new();
@@ -485,7 +486,7 @@ fn extract_name_token(method: &Method) -> proc_macro2::Ident {
 
 fn extract_context_token(params: &MethodSigTokensParams) -> TokenStream {
     match params.with_context {
-        true => quote! {, context: Arc<Context>},
+        true => quote! {, context: ProcedureContext<ServerContext, TransportContext>},
         false => TokenStream::default(),
     }
 }

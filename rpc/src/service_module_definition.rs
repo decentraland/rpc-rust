@@ -7,6 +7,11 @@ use crate::{rpc_protocol::RemoteError, stream_protocol::Generator};
 use core::future::Future;
 use std::{collections::HashMap, pin::Pin, sync::Arc};
 
+pub struct ProcedureContext<ServerContext, TransportContext> {
+    pub server_context: Arc<ServerContext>,
+    pub transport_context: Option<Arc<TransportContext>>,
+}
+
 /// General type returned by every procedure
 pub type Response<T> = Pin<Box<dyn Future<Output = Result<T, RemoteError>> + Send>>;
 
@@ -17,15 +22,21 @@ pub type CommonPayload = Vec<u8>;
 pub type UnaryResponse = Response<Vec<u8>>;
 
 /// Handler type for a unary procedure.
-pub type UnaryRequestHandler<Context> =
-    dyn Fn(CommonPayload, Arc<Context>) -> UnaryResponse + Send + Sync;
+pub type UnaryRequestHandler<ServerContext, TransportContext> = dyn Fn(CommonPayload, ProcedureContext<ServerContext, TransportContext>) -> UnaryResponse
+    + Send
+    + Sync;
 
 /// Response type returned by a server streams procedure
 pub type ServerStreamsResponse = Response<Generator<Vec<u8>>>;
 
 /// Handler type for a server streams procedure
-pub type ServerStreamsRequestHandler<Context> =
-    dyn Fn(CommonPayload, Arc<Context>) -> ServerStreamsResponse + Send + Sync;
+pub type ServerStreamsRequestHandler<ServerContext, TransportContext> =
+    dyn Fn(
+            CommonPayload,
+            ProcedureContext<ServerContext, TransportContext>,
+        ) -> ServerStreamsResponse
+        + Send
+        + Sync;
 
 /// Payload type that a client streams procedure receives
 pub type ClientStreamsPayload = Generator<Vec<u8>>;
@@ -34,8 +45,13 @@ pub type ClientStreamsPayload = Generator<Vec<u8>>;
 pub type ClientStreamsResponse = Response<Vec<u8>>;
 
 /// Handler type for a client streams procedure
-pub type ClientStreamsRequestHandler<Context> =
-    dyn Fn(ClientStreamsPayload, Arc<Context>) -> ClientStreamsResponse + Send + Sync;
+pub type ClientStreamsRequestHandler<ServerContext, TransportContext> =
+    dyn Fn(
+            ClientStreamsPayload,
+            ProcedureContext<ServerContext, TransportContext>,
+        ) -> ClientStreamsResponse
+        + Send
+        + Sync;
 
 /// Payload type that a bidirection streams procedure rceives
 pub type BiStreamsPayload = Generator<Vec<u8>>;
@@ -44,22 +60,25 @@ pub type BiStreamsPayload = Generator<Vec<u8>>;
 pub type BiStreamsResponse = Response<Generator<Vec<u8>>>;
 
 /// Handler type for a bidirectional streams procedure
-pub type BiStreamsRequestHandler<Context> =
-    dyn Fn(BiStreamsPayload, Arc<Context>) -> BiStreamsResponse + Send + Sync;
+pub type BiStreamsRequestHandler<ServerContext, TransportContext> = dyn Fn(BiStreamsPayload, ProcedureContext<ServerContext, TransportContext>) -> BiStreamsResponse
+    + Send
+    + Sync;
 
 /// Type used for storing procedure definitions given by the codegeneration for the RPC service
-pub enum ProcedureDefinition<Context> {
+pub enum ProcedureDefinition<ServerContext, TransportContext> {
     /// Stores unary procedure definitions. Unary Procedure means a basic request<>response
-    Unary(Arc<UnaryRequestHandler<Context>>),
+    Unary(Arc<UnaryRequestHandler<ServerContext, TransportContext>>),
     /// Stores server streams procedure definitions. [`crate::client::RpcClient`] sends a request and waits for the [`crate::server::RpcServer`] to send all the data that it has and close the stream opened
-    ServerStreams(Arc<ServerStreamsRequestHandler<Context>>),
+    ServerStreams(Arc<ServerStreamsRequestHandler<ServerContext, TransportContext>>),
     /// Stores client strems procedure definitions. [`crate::client::RpcClient`] sends a request and opens a stream in the [`crate::server::RpcServer`], then [`crate::server::RpcServer`] waits for [`crate::client::RpcClient`] to send all the payloads
-    ClientStreams(Arc<ClientStreamsRequestHandler<Context>>),
+    ClientStreams(Arc<ClientStreamsRequestHandler<ServerContext, TransportContext>>),
     /// Stores bidirectional streams procedure definitions. A stream is opened on both sides (client and server)
-    BiStreams(Arc<BiStreamsRequestHandler<Context>>),
+    BiStreams(Arc<BiStreamsRequestHandler<ServerContext, TransportContext>>),
 }
 
-impl<Context> Clone for ProcedureDefinition<Context> {
+impl<ServerContext, TransportContext> Clone
+    for ProcedureDefinition<ServerContext, TransportContext>
+{
     fn clone(&self) -> Self {
         match self {
             Self::Unary(procedure) => Self::Unary(procedure.clone()),
@@ -71,15 +90,15 @@ impl<Context> Clone for ProcedureDefinition<Context> {
 }
 
 /// It stores all procedures defined for a RPC service
-pub struct ServiceModuleDefinition<Context> {
+pub struct ServiceModuleDefinition<ServerContext, TransportContext> {
     /// Map that stores all procedures for the service
     ///
     /// the key is the procedure's name and the value is the handler for the procedure
     ///
-    procedure_definitions: HashMap<String, ProcedureDefinition<Context>>,
+    procedure_definitions: HashMap<String, ProcedureDefinition<ServerContext, TransportContext>>,
 }
 
-impl<Context> ServiceModuleDefinition<Context> {
+impl<ServerContext, TransportContext> ServiceModuleDefinition<ServerContext, TransportContext> {
     pub fn new() -> Self {
         Self {
             procedure_definitions: HashMap::new(),
@@ -88,7 +107,10 @@ impl<Context> ServiceModuleDefinition<Context> {
 
     /// Add an unary procedure handler to the service definition
     pub fn add_unary<
-        H: Fn(CommonPayload, Arc<Context>) -> UnaryResponse + Send + Sync + 'static,
+        H: Fn(CommonPayload, ProcedureContext<ServerContext, TransportContext>) -> UnaryResponse
+            + Send
+            + Sync
+            + 'static,
     >(
         &mut self,
         name: &str,
@@ -99,7 +121,13 @@ impl<Context> ServiceModuleDefinition<Context> {
 
     /// Add a server streams procedure handler to the service definition
     pub fn add_server_streams<
-        H: Fn(CommonPayload, Arc<Context>) -> ServerStreamsResponse + Send + Sync + 'static,
+        H: Fn(
+                CommonPayload,
+                ProcedureContext<ServerContext, TransportContext>,
+            ) -> ServerStreamsResponse
+            + Send
+            + Sync
+            + 'static,
     >(
         &mut self,
         name: &str,
@@ -110,7 +138,13 @@ impl<Context> ServiceModuleDefinition<Context> {
 
     /// Add a client streams procedure handler to the service definition
     pub fn add_client_streams<
-        H: Fn(ClientStreamsPayload, Arc<Context>) -> ClientStreamsResponse + Send + Sync + 'static,
+        H: Fn(
+                ClientStreamsPayload,
+                ProcedureContext<ServerContext, TransportContext>,
+            ) -> ClientStreamsResponse
+            + Send
+            + Sync
+            + 'static,
     >(
         &mut self,
         name: &str,
@@ -121,7 +155,13 @@ impl<Context> ServiceModuleDefinition<Context> {
 
     /// Add a bidirectional streams procedure handler to the service definition
     pub fn add_bidir_streams<
-        H: Fn(BiStreamsPayload, Arc<Context>) -> BiStreamsResponse + Send + Sync + 'static,
+        H: Fn(
+                BiStreamsPayload,
+                ProcedureContext<ServerContext, TransportContext>,
+            ) -> BiStreamsResponse
+            + Send
+            + Sync
+            + 'static,
     >(
         &mut self,
         name: &str,
@@ -130,17 +170,25 @@ impl<Context> ServiceModuleDefinition<Context> {
         self.add_definition(name, ProcedureDefinition::BiStreams(Arc::new(handler)));
     }
 
-    fn add_definition(&mut self, name: &str, definition: ProcedureDefinition<Context>) {
+    fn add_definition(
+        &mut self,
+        name: &str,
+        definition: ProcedureDefinition<ServerContext, TransportContext>,
+    ) {
         self.procedure_definitions
             .insert(name.to_string(), definition);
     }
 
-    pub fn get_definitions(&self) -> &HashMap<String, ProcedureDefinition<Context>> {
+    pub fn get_definitions(
+        &self,
+    ) -> &HashMap<String, ProcedureDefinition<ServerContext, TransportContext>> {
         &self.procedure_definitions
     }
 }
 
-impl<Context> Default for ServiceModuleDefinition<Context> {
+impl<ServerContext, TransportContext> Default
+    for ServiceModuleDefinition<ServerContext, TransportContext>
+{
     fn default() -> Self {
         Self::new()
     }
