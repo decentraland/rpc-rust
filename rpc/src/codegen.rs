@@ -337,7 +337,7 @@ impl RPCServiceGenerator {
 
                 #(#methods)*
 
-                port.register_module(#service_name.to_string(), service_def)
+                port.register_module(#service_name, service_def)
             }
         }
     }

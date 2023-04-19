@@ -699,7 +699,10 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
     }
 }
 
-/// RpcServerPort is what a RpcServer contains to handle different services/modules
+/// [`RpcServerPort`] is what a [`RpcServer`] contains to handle different services/modules on a single client. A server can have multiple ports.
+///
+/// An [`RpcServerPort`] is created by a client. A single client can create multiple ports, and each port can contain different or same modules registered.
+///
 pub struct RpcServerPort<Context> {
     /// RpcServer name
     pub name: String,
@@ -728,11 +731,11 @@ impl<Context> RpcServerPort<Context> {
     /// Just register the module in the port
     pub fn register_module(
         &mut self,
-        module_name: String,
+        module_name: &str,
         service_definition: ServiceModuleDefinition<Context>,
     ) {
         self.registered_modules
-            .insert(module_name, service_definition);
+            .insert(module_name.to_string(), service_definition);
     }
 
     /// It checks if the module is already loaded and return it.
