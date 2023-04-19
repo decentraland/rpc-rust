@@ -697,6 +697,7 @@ impl StreamsHandler {
         }
 
         if !was_closed_by_peer {
+            debug!("> StreamsHandler > send_streams_through_transport > closing stream");
             self.close_stream(transport, sequence_number, message_number, port_id)
                 .await?;
         }
