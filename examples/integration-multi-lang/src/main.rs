@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use dcl_rpc::{
-    server::{RpcServer, RpcServerPort},
+    server::RpcServer,
     transports::web_socket::{WebSocketServer, WebSocketTransport},
 };
 use integration_multi_lang::{
-    service::book_service, Book, BookServiceRegistration, MyExampleContext,
+    service::book_service, Book, BookServiceRegistration, MyExampleContext, WSTransportContext,
 };
 
 fn create_db() -> Vec<Book> {
@@ -60,14 +60,17 @@ async fn run_ws_example() {
     };
 
     let mut server = RpcServer::create(ctx);
-    server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
+    server.set_handler(|port| {
         BookServiceRegistration::register_service(port, book_service::BookService {})
     });
 
     let server_events_sender = server.get_server_events_sender();
     tokio::spawn(async move {
+        let mut id = 1;
         while let Some(Ok(connection)) = connection_listener.recv().await {
-            let transport = WebSocketTransport::new(connection);
+            let ctx = WSTransportContext { connection_id: id };
+            let transport = WebSocketTransport::new(connection, ctx);
+            id += 1;
             let transport_to_arc = Arc::new(transport);
             match server_events_sender.send_attach_transport(transport_to_arc) {
                 Ok(_) => {
