@@ -60,8 +60,8 @@ async fn run_ws_example() {
     };
 
     let mut server = RpcServer::create(ctx);
-    server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
-        BookServiceRegistration::register_service(port, book_service::BookService {})
+    server.set_module_registrator_handler(|port: &mut RpcServerPort<MyExampleContext>| {
+        BookServiceRegistration::register_service(port, book_service::BookService {});
     });
 
     let server_events_sender = server.get_server_events_sender();

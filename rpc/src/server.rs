@@ -21,6 +21,8 @@ use crate::{
 /// Handler that runs each time that a port is created
 type PortHandlerFn<Context> = dyn Fn(&mut RpcServerPort<Context>) + Send + Sync + 'static;
 
+type OnTransportClosesHandler<Transport> = dyn Fn(Arc<Transport>) + Send + Sync + 'static;
+
 /// Error returned by a server function could be an error which it's possible and useful to communicate or not.
 #[derive(Debug)]
 pub enum ServerResultError {
@@ -53,12 +55,12 @@ pub enum ServerError {
 impl RemoteErrorResponse for ServerError {
     fn error_code(&self) -> u32 {
         match self {
-            Self::ProtocolError => 400,
-            Self::PortNotFound => 404,
-            Self::LoadModuleError => 500, // it's unlikely to happen
-            Self::ModuleNotFound => 404,
-            Self::ProcedureNotFound => 404,
-            Self::UnexpectedErrorOnTransport => 500,
+            Self::ProtocolError => 1,
+            Self::PortNotFound => 2,
+            Self::ModuleNotFound => 3,
+            Self::ProcedureNotFound => 4,
+            Self::UnexpectedErrorOnTransport => 5,
+            Self::LoadModuleError => 0, // it's unlikely to happen
         }
     }
 
@@ -110,9 +112,9 @@ enum TransportNotification<T: Transport + ?Sized> {
 pub struct ServerEventsSender<T: Transport + ?Sized>(UnboundedSender<ServerEvents<T>>);
 
 impl<T: Transport + ?Sized> ServerEventsSender<T> {
-    /// Sends a `ServerEvents::AttachTransport` to the [`RpcServer`]
+    /// Sends a [`ServerEvents::AttachTransport`] to the [`RpcServer`]
     ///
-    /// This allows you to notify the server that has to attach a new transport and make it run to listen for new messages
+    /// This allows you to notify the server that has to attach a new transport so after that it can make it run to listen for new messages
     ///
     /// This is equivalent to `RpcServer::attach_transport` but it can be used to attach a transport to the [`RpcServer`] from another spawned thread (or background task)
     ///
@@ -133,16 +135,24 @@ impl<T: Transport + ?Sized> ServerEventsSender<T> {
         Ok(())
     }
 
+    /// Sends a [`ServerEvents::NewTransport`] to the [`RpcServer`]
+    ///
+    /// This allows you to notify the server that has to put to run a new transport
+    ///
+    /// It receives the [`Transport`] inside an `Arc` because it must be sharable.
+    ///
     fn send_new_transport(&self, id: TransportID, transport: Arc<T>) -> ServerResult<()> {
-        match self.0.send(ServerEvents::NewTransport(id, transport)) {
-            Ok(_) => Ok(()),
-            Err(_) => {
-                error!("> RpcServer > Error on notifying the new transport {id}");
-                Err(ServerResultError::Internal(
-                    ServerInternalError::TransportNotAttached,
-                ))
-            }
+        if self
+            .0
+            .send(ServerEvents::NewTransport(id, transport))
+            .is_err()
+        {
+            error!("> RpcServer > Error on notifying the new transport {id}");
+            return Err(ServerResultError::Internal(
+                ServerInternalError::TransportNotAttached,
+            ));
         }
+        Ok(())
     }
 }
 
@@ -160,7 +170,12 @@ pub struct RpcServer<Context, T: Transport + ?Sized> {
     /// The Transport used for the communication between `RpcClient` and [`RpcServer`]
     transports: HashMap<TransportID, Arc<T>>,
     /// The handler executed when a new port is created
-    handler: Option<Box<PortHandlerFn<Context>>>,
+    port_creation_handler: Option<Box<PortHandlerFn<Context>>>,
+    /// The handler executed when a transport is closed.
+    ///
+    /// It works for cleaning resources that may be tied to or depends on the transport's connection.
+    ///
+    on_transport_closes_handler: Option<Box<OnTransportClosesHandler<T>>>,
     /// Ports registered in the [`RpcServer`]
     ports: HashMap<u32, RpcServerPort<Context>>,
     /// RpcServer Context
@@ -183,7 +198,8 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
         let channel = unbounded_channel();
         Self {
             transports: HashMap::new(),
-            handler: None,
+            port_creation_handler: None,
+            on_transport_closes_handler: None,
             ports: HashMap::new(),
             context: Arc::new(ctx),
             messages_handler: Arc::new(ServerMessagesHandler::new()),
@@ -304,7 +320,11 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                         }
                     }
                     TransportNotification::CloseTransport(id) => {
-                        self.transports.remove(&id);
+                        if let Some(transport) = self.transports.remove(&id) {
+                            if let Some(on_close_handler) = &self.on_transport_closes_handler {
+                                on_close_handler(transport);
+                            }
+                        }
                     }
                 },
                 None => {
@@ -355,29 +375,27 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                             }
                                             break;
                                         }
-                                        match tx_cloned.send(TransportNotification::NewMessage((
-                                            transport.clone(),
-                                            event,
-                                        ))) {
-                                            Ok(_) => {}
-                                            Err(_) => {
-                                                error!("Error while sending new message from transport to server via notifier");
-                                                break;
-                                            }
+                                        if tx_cloned
+                                            .send(TransportNotification::NewMessage((
+                                                transport.clone(),
+                                                event,
+                                            )))
+                                            .is_err()
+                                        {
+                                            error!("Error while sending new message from transport to server via notifier");
+                                            break;
                                         }
                                     }
                                     Err(error) => {
-                                        match tx_cloned.send(
-                                            TransportNotification::NewErrorMessage((
+                                        if tx_cloned
+                                            .send(TransportNotification::NewErrorMessage((
                                                 transport.clone(),
                                                 error,
-                                            )),
-                                        ) {
-                                            Ok(_) => {}
-                                            Err(_) => {
-                                                error!("Error while sending an error from transport to server via notifier");
-                                                break;
-                                            }
+                                            )))
+                                            .is_err()
+                                        {
+                                            error!("Error while sending an error from transport to server via notifier");
+                                            break;
                                         }
                                     }
                                 }
@@ -385,16 +403,12 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                         });
                     }
                     ServerEvents::AttachTransport(transport) => {
-                        match transports_notifier
+                        if transports_notifier
                             .send(TransportNotification::MustAttachTransport(transport))
+                            .is_err()
                         {
-                            Ok(_) => {}
-                            Err(_) => {
-                                error!(
-                                    "Error while notifying the server to attach a new transport"
-                                );
-                                continue;
-                            }
+                            error!("Error while notifying the server to attach a new transport");
+                            continue;
                         };
                     }
                 }
@@ -406,11 +420,23 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
     ///
     /// When a port is created, a service should be registered
     /// for the port.
-    pub fn set_handler<H>(&mut self, handler: H)
+    pub fn set_module_registrator_handler<H>(&mut self, handler: H)
     where
         H: Fn(&mut RpcServerPort<Context>) + Send + Sync + 'static,
     {
-        self.handler = Some(Box::new(handler));
+        self.port_creation_handler = Some(Box::new(handler));
+    }
+
+    /// Set a handler to be executed when a transport was closed
+    ///
+    /// When a transport closes its connection, the closure will be executed.
+    ///
+    /// This could be useful there are resources that mey be tied to or depends on a transport's connection
+    pub fn set_on_transport_closes_handler<H>(&mut self, handler: H)
+    where
+        H: Fn(Arc<T>) + Send + Sync + 'static,
+    {
+        self.on_transport_closes_handler = Some(Box::new(handler));
     }
 
     /// Handle the requests for a procedure call
@@ -603,7 +629,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
         let port_name = create_port.port_name;
         let mut port = RpcServerPort::new(port_name.clone());
 
-        if let Some(handler) = &self.handler {
+        if let Some(handler) = &self.port_creation_handler {
             handler(&mut port);
         }
 
