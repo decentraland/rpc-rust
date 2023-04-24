@@ -15,6 +15,7 @@ pub struct RPCServiceGenerator {}
 pub struct MethodSigTokensParams {
     body: Option<TokenStream>,
     with_context: bool,
+    is_for_client: bool,
 }
 
 impl RPCServiceGenerator {
@@ -32,7 +33,7 @@ impl RPCServiceGenerator {
 
     fn method_sig_tokens(&self, method: &Method, params: MethodSigTokensParams) -> TokenStream {
         let input_type = self.extract_input_token(method);
-        let output_type = self.extract_output_token(method);
+        let output_type = self.extract_output_token(method, params.is_for_client);
         let name = extract_name_token(method);
         let context = extract_context_token(&params);
         let body = extract_body_token(params);
@@ -65,18 +66,32 @@ impl RPCServiceGenerator {
         }
     }
 
-    fn extract_output_token(&self, method: &Method) -> TokenStream {
+    fn extract_output_token(&self, method: &Method, is_client: bool) -> TokenStream {
         if method.output_type.to_string().eq("()") {
             // The unit type can not be casted to an Ident, so the empty token is needed
-            TokenStream::default()
+            if is_client {
+                quote! { -> ClientResult<()> }
+            } else {
+                quote! { -> Result<(), Error> }
+            }
         } else {
             let output_type = format_ident!("{}", method.output_type);
             match method.server_streaming {
                 true => {
                     let server_stream_response = self.server_stream_response();
-                    quote! {-> #server_stream_response<#output_type>}
+                    if is_client {
+                        quote! {-> ClientResult<#server_stream_response<#output_type>>}
+                    } else {
+                        quote! {-> Result<#server_stream_response<#output_type>, Error>}
+                    }
                 }
-                false => quote! {-> #output_type},
+                false => {
+                    if is_client {
+                        quote! {-> ClientResult<#output_type>}
+                    } else {
+                        quote! {-> Result<#output_type, Error>}
+                    }
+                }
             }
         }
     }
@@ -94,11 +109,15 @@ impl RPCServiceGenerator {
     fn generate_client_trait(&self, service: &Service, buf: &mut String) {
         // This is done with strings rather than tokens because Prost provides functions that
         // return doc comments as strings.
+        buf.push_str("use dcl_rpc::client::ClientResult;\n");
         buf.push('\n');
         service.comments.append_with_indent(0, buf);
 
         buf.push_str("#[async_trait::async_trait]\n");
-        buf.push_str("pub trait RPCServiceClient: Send + Sync + 'static {");
+        buf.push_str(&format!(
+            "pub trait {}ClientDefinition: Send + Sync + 'static {{",
+            service.name
+        ));
         for method in service.methods.iter() {
             buf.push('\n');
             method.comments.append_with_indent(1, buf);
@@ -108,7 +127,8 @@ impl RPCServiceGenerator {
                     method,
                     MethodSigTokensParams {
                         body: None,
-                        with_context: false
+                        with_context: false,
+                        is_for_client: true
                     }
                 )
             ));
@@ -122,6 +142,7 @@ impl RPCServiceGenerator {
 
     fn generate_server_trait(&self, service: &Service, buf: &mut String) {
         buf.push_str("use std::sync::Arc;\n");
+        buf.push_str("use dcl_rpc::rpc_protocol::{RemoteErrorResponse};\n");
         // This is done with strings rather than tokens because Prost provides functions that
         // return doc comments as strings.
         buf.push('\n');
@@ -129,7 +150,7 @@ impl RPCServiceGenerator {
 
         buf.push_str("#[async_trait::async_trait]\n");
         buf.push_str(&format!(
-            "pub trait {}<Context>: Send + Sync + 'static {{",
+            "pub trait {}<Context, Error: RemoteErrorResponse>: Send + Sync + 'static {{",
             self.get_server_service_name(service)
         ));
         for method in service.methods.iter() {
@@ -141,7 +162,8 @@ impl RPCServiceGenerator {
                     method,
                     MethodSigTokensParams {
                         body: None,
-                        with_context: true
+                        with_context: true,
+                        is_for_client: false
                     }
                 )
             ));
@@ -180,8 +202,8 @@ impl RPCServiceGenerator {
 
         buf.push_str("#[async_trait::async_trait]\n");
         buf.push_str(&format!(
-            "impl<T: Transport + 'static> RPCServiceClient for {}Client<T> {{",
-            service.name
+            "impl<T: Transport + 'static> {}ClientDefinition for {}Client<T> {{",
+            service.name, service.name
         ));
         for method in service.methods.iter() {
             buf.push('\n');
@@ -206,7 +228,8 @@ impl RPCServiceGenerator {
                     method,
                     MethodSigTokensParams {
                         body: Some(body),
-                        with_context: false
+                        with_context: false,
+                        is_for_client: true
                     }
                 )
             ));
@@ -224,7 +247,6 @@ impl RPCServiceGenerator {
             self.rpc_client_module
                 .call_unary_procedure(#name, #request)
                 .await
-                .unwrap()
         }
     }
 
@@ -239,7 +261,6 @@ impl RPCServiceGenerator {
             self.rpc_client_module
                 .call_server_streams_procedure(#name, #request)
                 .await
-                .unwrap()
         }
     }
 
@@ -254,7 +275,6 @@ impl RPCServiceGenerator {
             self.rpc_client_module
                 .call_client_streams_procedure(#name, #request)
                 .await
-                .unwrap()
         }
     }
 
@@ -269,7 +289,6 @@ impl RPCServiceGenerator {
             self.rpc_client_module
                 .call_bidir_streams_procedure(#name, #request)
                 .await
-                .unwrap()
         }
     }
 
@@ -305,8 +324,9 @@ impl RPCServiceGenerator {
         }
         quote! {
         pub fn register_service<
-                S: #trait_name<Context> + Send + Sync + 'static,
-                Context: Send + Sync + 'static
+                S: #trait_name<Context, Error> + Send + Sync + 'static,
+                Context: Send + Sync + 'static,
+                Error: RemoteErrorResponse + Send + Sync + 'static
             >(
                 port: &mut RpcServerPort<Context>,
                 service: S
@@ -343,8 +363,10 @@ impl RPCServiceGenerator {
             service_def.add_unary(#proto_method_name, move |#request, context| {
                 let service = service.clone();
                 Box::pin(async move {
-                    let response = #service_call;
-                    response.encode_to_vec()
+                    match #service_call {
+                        Ok(response) => Ok(response.encode_to_vec()),
+                        Err(err) => Err(err.into())
+                    }
                 })
             });
         }
@@ -375,9 +397,11 @@ impl RPCServiceGenerator {
             service_def.add_server_streams(#proto_method_name, move |#request, context| {
                 let service = service.clone();
                 Box::pin(async move {
-                    let server_streams = #service_stream;
-                    // Transforming and filling the new generator is spawned so the response is quick
-                    Generator::from_generator(server_streams, |item| item.encode_to_vec())
+                    match #service_stream {
+                        // Transforming and filling the new generator is spawned so the response is quick
+                        Ok(server_streams_generator) => Ok(Generator::from_generator(server_streams_generator, |item| Some(item.encode_to_vec()))),
+                        Err(err) => Err(err.into())
+                    }
                 })
             });
         }
@@ -406,11 +430,13 @@ impl RPCServiceGenerator {
                 let service = service.clone();
                 Box::pin(async move {
                     let generator = Generator::from_generator(request, |item| {
-                        #input
+                        Some(#input)
                     });
 
-                    let response = service.#method_name(generator, context).await;
-                    response.encode_to_vec()
+                    match service.#method_name(generator, context).await {
+                        Ok(response) => Ok(response.encode_to_vec()),
+                        Err(err) => Err(err.into())
+                    }
                 })
             });
         }
@@ -440,11 +466,13 @@ impl RPCServiceGenerator {
                 let service = service.clone();
                 Box::pin(async move {
                     let generator = Generator::from_generator(request, |item| {
-                        #input
+                        Some(#input)
                     });
 
-                    let response = service.#method_name(generator, context).await;
-                    Generator::from_generator(response, |item| item.encode_to_vec())
+                    match service.#method_name(generator, context).await {
+                        Ok(response_generator) => Ok(Generator::from_generator(response_generator, |item| Some(item.encode_to_vec()))),
+                        Err(err) => Err(err.into())
+                    }
                 })
             });
         }

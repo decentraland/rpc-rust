@@ -37,6 +37,8 @@ pub enum TransportError {
     /// For example: A peer reset the connection in a websocket connection
     ///
     Internal,
+    /// Transport is already closed
+    Closed,
 }
 
 #[async_trait]

@@ -37,4 +37,6 @@ pub enum CommonError {
     ProtocolError,
     TransportError,
     TransportNotAttached,
+    UnexpectedError(String),
+    TransportWasClosed,
 }
