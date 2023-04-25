@@ -431,7 +431,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
     ///
     /// When a transport closes its connection, the closure will be executed.
     ///
-    /// This could be useful there are resources that mey be tied to or depends on a transport's connection
+    /// This could be useful when there are resources that may be tied to or depends on a transport's connection
     pub fn set_on_transport_closes_handler<H>(&mut self, handler: H)
     where
         H: Fn(Arc<T>) + Send + Sync + 'static,
