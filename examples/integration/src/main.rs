@@ -156,7 +156,7 @@ async fn run_memory_transport() {
 
         // 3. Sets a handler for the port creation. Here you could put a condition for registering a service depending on the port name.
         // Multiple services can live in a single a RpcServer.
-        server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
+        server.set_module_registrator_handler(|port: &mut RpcServerPort<MyExampleContext>| {
             BookServiceRegistration::register_service(port, book_service::MyBookService {})
         });
 
@@ -243,7 +243,7 @@ async fn run_ws_transport() {
 
         // 5. Sets a handler for the port creation. Here you could put a condition for registering a service depending on the port name.
         // Multiple services can live in a single a RpcServer.
-        server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
+        server.set_module_registrator_handler(|port: &mut RpcServerPort<MyExampleContext>| {
             BookServiceRegistration::register_service(port, book_service::MyBookService {})
         });
 
@@ -321,7 +321,7 @@ async fn run_with_dyn_transport() {
 
         // 5. Sets a handler for the port creation. Here you could put a condition for registering a service depending on the port name.
         // Multiple services can live in a single a RpcServer.
-        server.set_handler(|port: &mut RpcServerPort<MyExampleContext>| {
+        server.set_module_registrator_handler(|port: &mut RpcServerPort<MyExampleContext>| {
             BookServiceRegistration::register_service(port, book_service::MyBookService {})
         });
 
