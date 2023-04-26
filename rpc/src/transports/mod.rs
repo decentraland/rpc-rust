@@ -5,8 +5,11 @@
 use async_trait::async_trait;
 
 pub mod error;
+#[cfg(feature = "memory")]
 pub mod memory;
+#[cfg(feature = "quic")]
 pub mod quic;
+#[cfg(feature = "websockets")]
 pub mod web_socket;
 
 #[derive(Debug)]
