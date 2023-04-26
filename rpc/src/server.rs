@@ -9,7 +9,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use crate::{
     messages_handlers::ServerMessagesHandler,
     rpc_protocol::{
-        parse::{build_message_identifier, fill_remote_error, parse_header},
+        parse::{build_message_identifier, fill_remote_error, parse_header, server_ready_message},
         CreatePort, CreatePortResponse, DestroyPort, ModuleProcedure, RemoteError,
         RemoteErrorResponse, Request, RequestModule, RequestModuleResponse, RpcMessageTypes,
     },
@@ -254,15 +254,9 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
             match transports_notification_receiver.recv().await {
                 Some(notification) => match notification {
                     TransportNotification::NewMessage((transport, event)) => match event {
-                        TransportEvent::Connect => {
-                            // Response back to the client to finally establish the connection
-                            // on both ends
-                            transport
-                                .send(vec![0])
-                                .await
-                                .expect("expect to be able to connect");
+                        TransportEvent::Error(err) => {
+                            error!("> RpcServer > Transport error {}", err)
                         }
-                        TransportEvent::Error(err) => error!("Transport error {}", err),
                         TransportEvent::Message(payload) => match parse_header(&payload) {
                             Some((message_type, message_number)) => {
                                 match self
@@ -274,7 +268,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                     )
                                     .await
                                 {
-                                    Ok(_) => debug!("Transport message handled!"),
+                                    Ok(_) => debug!("> RpcServer > Transport message handled!"),
                                     Err(server_error) => match server_error {
                                         ServerResultError::External(server_external_error) => {
                                             error!("> RpcServer > Server External Error {server_external_error:?}");
@@ -309,13 +303,12 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                         _ => continue,
                     },
                     TransportNotification::NewErrorMessage((_, error)) => {
-                        // TODO: Send error?
                         error!("> RpcServer > Error on transport {error:?}");
                         continue;
                     }
                     TransportNotification::MustAttachTransport(transport) => {
                         if let Err(error) = self.new_transport_attached(transport) {
-                            error!("Error on attaching transport to the server in order to receive message from it: {error:?}");
+                            error!("> RpcServer > Error on attaching transport to the server in order to receive message from it: {error:?}");
                             continue;
                         }
                     }
@@ -328,7 +321,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                     }
                 },
                 None => {
-                    error!("Transport notification receiver error");
+                    error!("> RpcServer > Transport notification receiver error");
                     break;
                 }
             }
@@ -363,6 +356,20 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                     ServerEvents::NewTransport(id, transport) => {
                         let tx_cloned = transports_notifier.clone();
                         tokio::spawn(async move {
+                            if let Err(error) =
+                                transport.send(server_ready_message().encode_to_vec()).await
+                            {
+                                error!(
+                                    "> From a Transport > Error while sending server ready message: {error:?}"
+                                );
+                                if matches!(error, TransportError::Closed) {
+                                    return;
+                                } else {
+                                    transport.close().await;
+                                    return;
+                                }
+                            }
+
                             loop {
                                 match transport.receive().await {
                                     Ok(event) => {
@@ -371,7 +378,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                                 .send(TransportNotification::CloseTransport(id))
                                                 .is_err()
                                             {
-                                                error!("Erron while sending close notification for a transport")
+                                                error!("> From a Transport > Error on while sending close notification for a transport")
                                             }
                                             break;
                                         }
@@ -382,7 +389,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                             )))
                                             .is_err()
                                         {
-                                            error!("Error while sending new message from transport to server via notifier");
+                                            error!("> From a Transport > Error while sending new message from transport to server via notifier");
                                             break;
                                         }
                                     }
@@ -394,7 +401,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                             )))
                                             .is_err()
                                         {
-                                            error!("Error while sending an error from transport to server via notifier");
+                                            error!("> From a Transport > Error while sending an error from transport to server via notifier");
                                             break;
                                         }
                                     }
@@ -407,7 +414,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                             .send(TransportNotification::MustAttachTransport(transport))
                             .is_err()
                         {
-                            error!("Error while notifying the server to attach a new transport");
+                            error!("> From a Transport > Error while notifying the server to attach a new transport");
                             continue;
                         };
                     }

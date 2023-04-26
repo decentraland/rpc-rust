@@ -107,9 +107,15 @@ pub fn parse_protocol_message<R: Message + Default>(data: &[u8]) -> ParseMessage
 ///
 /// Because at the moment of conversion, the `message_number` is not available so the [`RemoteError`] has to be filled then.
 ///
-pub fn fill_remote_error(remote_error: &mut RemoteError, message_number: u32) {
+pub(crate) fn fill_remote_error(remote_error: &mut RemoteError, message_number: u32) {
     remote_error.message_identifier =
         build_message_identifier(RpcMessageTypes::RemoteErrorResponse as u32, message_number);
+}
+
+pub(crate) fn server_ready_message() -> RpcMessageHeader {
+    RpcMessageHeader {
+        message_identifier: build_message_identifier(RpcMessageTypes::ServerReady as u32, 0),
+    }
 }
 
 #[cfg(test)]

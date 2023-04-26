@@ -85,11 +85,6 @@ impl<T: Transport + 'static> RpcClient<T> {
     /// Sends an empty message through the Transport to flag the Transport as "connected"
     async fn establish_connection(transport: T) -> ClientResult<T> {
         // Send empty message to notify connection
-        transport
-            .send(vec![0])
-            .await
-            .map_err(|_| ClientResultError::Client(ClientError::TransportError))?;
-
         match transport.receive().await {
             Ok(TransportEvent::Connect) => Ok(transport),
             _ => Err(ClientResultError::Client(ClientError::TransportError)),
