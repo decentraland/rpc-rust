@@ -87,8 +87,9 @@ pub enum ServerInternalError {
 }
 
 type TransportID = u32;
+type PortID = u32;
 
-type TransportMessage<T, M> = (Arc<T>, M);
+type TransportMessage<T, M> = (T, M);
 
 /// Events that the [`RpcServer`] has to react to
 enum ServerEvents<T: Transport + ?Sized> {
@@ -99,9 +100,9 @@ enum ServerEvents<T: Transport + ?Sized> {
 /// Notifications about Transports connected to the [`RpcServer`]
 enum TransportNotification<T: Transport + ?Sized> {
     /// New message received from a transport
-    NewMessage(TransportMessage<T, TransportEvent>),
+    NewMessage(TransportMessage<(Arc<T>, TransportID), TransportEvent>),
     /// New error received from a transport
-    NewErrorMessage(TransportMessage<T, TransportError>),
+    NewErrorMessage(TransportMessage<Arc<T>, TransportError>),
     /// A Notification for when a `ServerEvents::AttachTransport` is received in order to attach a transport to the server [`RpcServer`](#method.RpcServer.attach_transport) and make it run to receive messages
     MustAttachTransport(Arc<T>),
     /// Close Transport Notification in order to remove it from the [`RpcServer`] state
@@ -177,7 +178,8 @@ pub struct RpcServer<Context, T: Transport + ?Sized> {
     ///
     on_transport_closes_handler: Option<Box<OnTransportClosesHandler<T>>>,
     /// Ports registered in the [`RpcServer`]
-    ports: HashMap<u32, RpcServerPort<Context>>,
+    ports: HashMap<PortID, RpcServerPort<Context>>,
+    ports_by_transport_id: HashMap<TransportID, Vec<PortID>>,
     /// RpcServer Context
     context: Arc<Context>,
     /// Handler in charge of handling every request<>response.
@@ -201,6 +203,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
             port_creation_handler: None,
             on_transport_closes_handler: None,
             ports: HashMap::new(),
+            ports_by_transport_id: HashMap::new(),
             context: Arc::new(ctx),
             messages_handler: Arc::new(ServerMessagesHandler::new()),
             next_transport_id: 1,
@@ -253,55 +256,57 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
             // A transport here is the equivalent to a new connection in a common HTTP server
             match transports_notification_receiver.recv().await {
                 Some(notification) => match notification {
-                    TransportNotification::NewMessage((transport, event)) => match event {
-                        TransportEvent::Error(err) => {
-                            error!("> RpcServer > Transport error {}", err)
-                        }
-                        TransportEvent::Message(payload) => match parse_header(&payload) {
-                            Some((message_type, message_number)) => {
-                                match self
-                                    .handle_message(
-                                        transport.clone(),
-                                        payload,
-                                        message_type,
-                                        message_number,
-                                    )
-                                    .await
-                                {
-                                    Ok(_) => debug!("> RpcServer > Transport message handled!"),
-                                    Err(server_error) => match server_error {
-                                        ServerResultError::External(server_external_error) => {
-                                            error!("> RpcServer > Server External Error {server_external_error:?}");
-                                            // If a server error is external, we should send it back to the client
-                                            tokio::spawn(async move {
-                                                let mut remote_error: RemoteError =
-                                                    server_external_error.into();
-                                                fill_remote_error(
-                                                    &mut remote_error,
-                                                    message_number,
-                                                );
-                                                if transport
-                                                    .send(remote_error.encode_to_vec())
-                                                    .await
-                                                    .is_err()
-                                                {
-                                                    error!("> RpcServer > Error on sending the a RemoteError to the client {remote_error:?}")
-                                                }
-                                            });
-                                        }
-                                        ServerResultError::Internal(server_internal_error) => {
-                                            error!("> RpcServer > Server Internal Error: {server_internal_error:?}")
-                                        }
-                                    },
+                    TransportNotification::NewMessage(((transport, transport_id), event)) => {
+                        match event {
+                            TransportEvent::Error(err) => {
+                                error!("> RpcServer > Transport error {}", err)
+                            }
+                            TransportEvent::Message(payload) => match parse_header(&payload) {
+                                Some((message_type, message_number)) => {
+                                    match self
+                                        .handle_message(
+                                            transport_id,
+                                            payload,
+                                            message_type,
+                                            message_number,
+                                        )
+                                        .await
+                                    {
+                                        Ok(_) => debug!("> RpcServer > Transport message handled!"),
+                                        Err(server_error) => match server_error {
+                                            ServerResultError::External(server_external_error) => {
+                                                error!("> RpcServer > Server External Error {server_external_error:?}");
+                                                // If a server error is external, we should send it back to the client
+                                                tokio::spawn(async move {
+                                                    let mut remote_error: RemoteError =
+                                                        server_external_error.into();
+                                                    fill_remote_error(
+                                                        &mut remote_error,
+                                                        message_number,
+                                                    );
+                                                    if transport
+                                                        .send(remote_error.encode_to_vec())
+                                                        .await
+                                                        .is_err()
+                                                    {
+                                                        error!("> RpcServer > Error on sending the a RemoteError to the client {remote_error:?}")
+                                                    }
+                                                });
+                                            }
+                                            ServerResultError::Internal(server_internal_error) => {
+                                                error!("> RpcServer > Server Internal Error: {server_internal_error:?}")
+                                            }
+                                        },
+                                    }
                                 }
-                            }
-                            None => {
-                                error!("> RpcServer > A Invalid Header was sent by the client, message ignored");
-                                continue;
-                            }
-                        },
-                        _ => continue,
-                    },
+                                None => {
+                                    error!("> RpcServer > A Invalid Header was sent by the client, message ignored");
+                                    continue;
+                                }
+                            },
+                            _ => continue,
+                        }
+                    }
                     TransportNotification::NewErrorMessage((_, error)) => {
                         error!("> RpcServer > Error on transport {error:?}");
                         continue;
@@ -316,6 +321,13 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                         if let Some(transport) = self.transports.remove(&id) {
                             if let Some(on_close_handler) = &self.on_transport_closes_handler {
                                 on_close_handler(transport);
+                            }
+                            // Get port ids to drop ports
+                            if let Some(port_ids) = self.ports_by_transport_id.remove(&id) {
+                                for id in port_ids {
+                                    // Drop port
+                                    self.ports.remove(&id);
+                                }
                             }
                         }
                     }
@@ -363,6 +375,12 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                     "> From a Transport > Error while sending server ready message: {error:?}"
                                 );
                                 if matches!(error, TransportError::Closed) {
+                                    if tx_cloned
+                                        .send(TransportNotification::CloseTransport(id))
+                                        .is_err()
+                                    {
+                                        error!("> From a Transport > Error on while sending close notification for a transport")
+                                    }
                                     return;
                                 } else {
                                     transport.close().await;
@@ -384,7 +402,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                         }
                                         if tx_cloned
                                             .send(TransportNotification::NewMessage((
-                                                transport.clone(),
+                                                (transport.clone(), id),
                                                 event,
                                             )))
                                             .is_err()
@@ -627,6 +645,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
     async fn handle_create_port(
         &mut self,
         transport: Arc<T>,
+        transport_id: TransportID,
         message_number: u32,
         payload: Vec<u8>,
     ) -> ServerResult<()> {
@@ -641,6 +660,10 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
         }
 
         self.ports.insert(port_id, port);
+        self.ports_by_transport_id
+            .entry(transport_id)
+            .and_modify(|ports| ports.push(port_id))
+            .or_insert_with(|| vec![port_id]);
 
         let response = CreatePortResponse {
             message_identifier: build_message_identifier(
@@ -685,11 +708,18 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
     /// * `message_number` - the number of the message derivided from the `message_identifier` in the [`crate::rpc_protocol::RpcMessageHeader`]
     async fn handle_message(
         &mut self,
-        transport: Arc<T>,
+        transport_id: TransportID,
         payload: Vec<u8>,
         message_type: RpcMessageTypes,
         message_number: u32,
     ) -> ServerResult<()> {
+        let transport = if let Some(transport) = self.transports.get(&transport_id) {
+            transport.clone()
+        } else {
+            return Err(ServerResultError::Internal(
+                ServerInternalError::TransportNotAttached,
+            ));
+        };
         match message_type {
             RpcMessageTypes::Request => {
                 self.handle_request(transport, message_number, payload)
@@ -700,7 +730,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                     .await?
             }
             RpcMessageTypes::CreatePort => {
-                self.handle_create_port(transport, message_number, payload)
+                self.handle_create_port(transport, transport_id, message_number, payload)
                     .await?
             }
             RpcMessageTypes::DestroyPort => self.handle_destroy_port(payload)?,
