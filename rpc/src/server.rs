@@ -257,10 +257,12 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                         TransportEvent::Connect => {
                             // Response back to the client to finally establish the connection
                             // on both ends
-                            transport
-                                .send(vec![0])
-                                .await
-                                .expect("expect to be able to connect");
+                            let result = transport.send(vec![0]).await;
+                            if let Err(e) = result {
+                                error!("Couldn't send connect message to client: {e:?}");
+                                transport.close().await;
+                                continue;
+                            }
                         }
                         TransportEvent::Error(err) => error!("Transport error {}", err),
                         TransportEvent::Message(payload) => match parse_header(&payload) {
