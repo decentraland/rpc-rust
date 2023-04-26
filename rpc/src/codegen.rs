@@ -115,7 +115,7 @@ impl RPCServiceGenerator {
 
         buf.push_str("#[async_trait::async_trait]\n");
         buf.push_str(&format!(
-            "pub trait {}ClientDefinition: Send + Sync + 'static {{",
+            "pub trait {}ClientDefinition<T: Transport + 'static>: ServiceClient<T> +  Send + Sync + 'static {{",
             service.name
         ));
         for method in service.methods.iter() {
@@ -202,7 +202,7 @@ impl RPCServiceGenerator {
 
         buf.push_str("#[async_trait::async_trait]\n");
         buf.push_str(&format!(
-            "impl<T: Transport + 'static> {}ClientDefinition for {}Client<T> {{",
+            "impl<T: Transport + 'static> {}ClientDefinition<T> for {}Client<T> {{",
             service.name, service.name
         ));
         for method in service.methods.iter() {
