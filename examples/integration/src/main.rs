@@ -1,14 +1,8 @@
-use integration::{BookServiceClient, BookServiceClientDefinition, BookServiceRegistration};
-use std::sync::Arc;
-use std::{env, time::Duration};
-use tokio::sync::RwLock; // AUTO-GENERATED CODE
-
 use dcl_rpc::{
     client::RpcClient,
     server::{RpcServer, RpcServerPort},
     stream_protocol::Generator,
     transports::{
-        self,
         memory::MemoryTransport,
         quic::QuicTransport,
         web_socket::{WebSocketClient, WebSocketServer, WebSocketTransport},
@@ -18,10 +12,12 @@ use dcl_rpc::{
 use integration::{
     service::book_service,
     setup_quic::{configure_client, generate_self_signed_cert},
-    Book, GetBookRequest, MyExampleContext, QueryBooksRequest,
+    Book, BookServiceClient, BookServiceClientDefinition, BookServiceRegistration, GetBookRequest,
+    MyExampleContext, QueryBooksRequest,
 };
 use quinn::ServerConfig;
-use tokio::{join, select, time::sleep};
+use std::{env, sync::Arc, time::Duration};
+use tokio::{join, select, sync::RwLock, time::sleep};
 use tokio_util::sync::CancellationToken;
 
 // An in-memory database for the examples
@@ -60,7 +56,7 @@ fn create_db() -> Vec<Book> {
 
 /// Function to creates the memory transport and returns a tuple of two transports, first one for the client and second one for the server.
 fn create_memory_transports() -> (MemoryTransport, MemoryTransport) {
-    transports::memory::MemoryTransport::create()
+    MemoryTransport::create()
 }
 
 #[allow(dead_code)]
