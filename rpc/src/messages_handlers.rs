@@ -431,7 +431,8 @@ impl<T: Transport + ?Sized + 'static> ClientMessagesHandler<T> {
         tokio::spawn(async move {
             select! {
                 _ = token.cancelled() => {
-                    debug!("> ClientMessagesHandler > cancelled!")
+                    debug!("> ClientMessagesHandler > cancelled!");
+                    self.transport.close().await;
                 },
                 _ = self.process() => {
 
