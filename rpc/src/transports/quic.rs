@@ -1,15 +1,14 @@
 //! QUIC as the wire between an [`RpcServer`](crate::server::RpcServer)  and a [`RpcClient`](crate::client::RpcClient).
+use super::{Transport, TransportError, TransportEvent};
+use crate::rpc_protocol::{parse::parse_header, RpcMessageTypes};
+use async_trait::async_trait;
+use log::{debug, error};
+use quinn::{ClientConfig, Endpoint, RecvStream, SendStream, ServerConfig};
 use std::{
     net::SocketAddr,
     sync::atomic::{AtomicBool, Ordering},
 };
-
-use async_trait::async_trait;
-use log::{debug, error};
-use quinn::{ClientConfig, Endpoint, RecvStream, SendStream, ServerConfig};
 use tokio::sync::Mutex;
-
-use super::{Transport, TransportError, TransportEvent};
 
 pub struct QuicTransport {
     send: Mutex<SendStream>,
@@ -61,7 +60,7 @@ impl QuicTransport {
         // Bind this endpoint to a UDP socket on the given server address.
         let endpoint = Endpoint::server(config, address)?;
 
-        let connection = endpoint.accept().await.ok_or(TransportError::Internal)?;
+        let connection = endpoint.accept().await.ok_or(TransportError::Closed)?;
         let bi_stream = connection.await?.accept_bi().await?;
         Ok(Self::new(bi_stream))
     }
@@ -75,12 +74,16 @@ impl Transport for QuicTransport {
         match self.receiver.lock().await.read_chunk(1024, true).await {
             Ok(Some(chunk)) => {
                 let message = chunk.bytes.to_vec();
-                let message = self.message_to_transport_event(message);
-
-                if let TransportEvent::Connect = message {
+                if !self.is_connected() {
                     self.ready.store(true, Ordering::SeqCst);
+                    if let Some((message_type, _)) = parse_header(&message) {
+                        // This is exclusively for the client
+                        if matches!(message_type, RpcMessageTypes::ServerReady) {
+                            return Ok(TransportEvent::Connect);
+                        }
+                    }
                 }
-                return Ok(message);
+                return Ok(TransportEvent::Message(message));
             }
             _ => {
                 error!("Failed to receive message");

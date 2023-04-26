@@ -1,16 +1,19 @@
 //! Websockets as the wire between an [`RpcServer`](crate::server::RpcServer) and a [`RpcClient`](crate::client::RpcClient).
 //!
 //! This let the user get the most out of the advantages of using Decentraland RPC.
+
+use super::{Transport, TransportError, TransportEvent};
+use crate::rpc_protocol::{parse::parse_header, RpcMessageTypes};
+use async_trait::async_trait;
 use futures_util::{
     stream::{SplitSink, SplitStream},
     SinkExt, StreamExt, TryStreamExt,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
-use tokio_tungstenite::{accept_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
-
-use super::{Transport, TransportError, TransportEvent};
-use async_trait::async_trait;
 use log::{debug, error};
+use std::{
+    error::Error,
+    sync::atomic::{AtomicBool, Ordering},
+};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::{
@@ -19,7 +22,9 @@ use tokio::{
     },
     task::JoinHandle,
 };
-use tokio_tungstenite::connect_async;
+use tokio_tungstenite::{
+    accept_async, connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream,
+};
 
 /// Write Stream Half of [`WebSocketStream`]
 type WriteStream =
@@ -46,7 +51,9 @@ pub struct WebSocketServer {
 ///
 /// And then attach turn the connection into a transport and attach it to the [`RpcServer`](crate::server::RpcServer)
 ///
-type OnConnectionListener = UnboundedReceiver<Result<Socket, TransportError>>;
+type OnConnectionListener = UnboundedReceiver<Result<Socket, Box<dyn Error + Send + Sync>>>;
+
+pub enum WebSocketServerErrors {}
 
 impl WebSocketServer {
     /// Set the configuration and the minimum for a new WebSocket Server
@@ -61,53 +68,61 @@ impl WebSocketServer {
     ///
     /// Each new connection will be sent through the `OnConnectionListener`, in order to be attached to the [`RpcServer`](crate::server::RpcServer)  as a [`WebSocketTransport`]
     ///
-    pub async fn listen(&mut self) -> Result<OnConnectionListener, TransportError> {
+    pub async fn listen(&mut self) -> Result<OnConnectionListener, std::io::Error> {
         // listen to given address
         let listener = TcpListener::bind(&self.address).await?;
         debug!("Listening on: {}", self.address);
 
-        let (tx_on_connection_listener, rx_on_connection_listener) = unbounded_channel();
+        let (tx_on_connection_listener, rx_on_connection_listener) =
+            unbounded_channel::<Result<Socket, Box<dyn Error + Send + Sync>>>();
 
         let join_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {
-                        let peer = if let Ok(perr) = stream.peer_addr() {
-                            perr
-                        } else {
-                            if tx_on_connection_listener
-                                .send(Err(TransportError::Connection))
-                                .is_err()
-                            {
-                                error!("WS Server: Error on sending the error to the listener")
+                        let peer = match stream.peer_addr() {
+                            Ok(peer) => peer,
+                            Err(err) => {
+                                error!(
+                                    "> WS Server > Error on get the remote address of the socket: {err:?}"
+                                );
+                                continue;
                             }
-                            continue;
                         };
 
-                        debug!("Peer address: {}", peer);
+                        debug!("> WS Server > Peer address: {}", peer);
                         let stream = MaybeTlsStream::Plain(stream);
-                        if let Ok(ws) = accept_async(stream).await {
-                            if tx_on_connection_listener.send(Ok(ws)).is_err() {
-                                error!("WS Server: Error on sending the new ws socket to listener")
+                        match accept_async(stream).await {
+                            Ok(ws) => {
+                                if tx_on_connection_listener.send(Ok(ws)).is_err() {
+                                    error!(
+                                            "> WS Server > Error on sending the new ws socket to listener"
+                                    );
+                                    break;
+                                }
                             }
-                        } else {
-                            if tx_on_connection_listener
-                                .send(Err(TransportError::Connection))
-                                .is_err()
-                            {
-                                error!("WS Server: Error on sending the error to the listener")
+                            Err(error) => {
+                                if tx_on_connection_listener
+                                    .send(Err(Box::new(error)))
+                                    .is_err()
+                                {
+                                    error!(
+                                            "> WS Server > Error on sending the new ws socket to listener"
+                                    );
+                                    break;
+                                }
+                                error!("> WS Server > Error on upgrading the socket");
+                                continue;
                             }
-                            continue;
-                        };
+                        }
                     }
                     Err(error) => {
+                        error!("> WS Server > Error on accepting a stream {error:?}");
                         if tx_on_connection_listener
-                            .send(Err(TransportError::Connection))
+                            .send(Err(Box::new(error)))
                             .is_err()
                         {
-                            error!(
-                                "WS Server: Error on sending the error to the listener: {error:?}"
-                            )
+                            error!("> WS Server > Error on sending the error to the listener")
                         }
                     }
                 }
@@ -187,15 +202,21 @@ impl Transport for WebSocketTransport {
         match self.read.lock().await.try_next().await {
             Ok(Some(message)) => {
                 if message.is_binary() {
-                    let message = self.message_to_transport_event(message.into_data());
-                    if let TransportEvent::Connect = message {
+                    let message_data = message.into_data();
+                    if !self.is_connected() {
                         self.ready.store(true, Ordering::SeqCst);
+                        if let Some((message_type, _)) = parse_header(&message_data) {
+                            // This is exclusively for the client
+                            if matches!(message_type, RpcMessageTypes::ServerReady) {
+                                return Ok(TransportEvent::Connect);
+                            }
+                        }
                     }
-                    return Ok(message);
+                    return Ok(TransportEvent::Message(message_data));
                 } else {
                     // Ignore messages that are not binary
                     error!("> WebSocketTransport > Received message is not binary");
-                    return Err(TransportError::Internal);
+                    return Err(TransportError::NotBinaryMessage);
                 }
             }
             Ok(_) => {
@@ -226,7 +247,7 @@ impl Transport for WebSocketTransport {
 
                 let error = match err {
                     ConnectionClosed | AlreadyClosed => TransportError::Closed,
-                    _ => TransportError::Internal,
+                    error => TransportError::Internal(Box::new(error)),
                 };
 
                 Err(error)

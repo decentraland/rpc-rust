@@ -3,13 +3,11 @@
 //! However, this type of transport has an use case on Decentraland for the comms between `Scenes<>BrowserInterface<>GameEngine`.
 //!
 //! The most common use case is for testing. It uses [`async_channel`] internally
-///
-use std::sync::atomic::{AtomicBool, Ordering};
-
+use super::{Transport, TransportError, TransportEvent};
+use crate::rpc_protocol::{parse::parse_header, RpcMessageTypes};
 use async_channel::{bounded, Receiver, Sender};
 use async_trait::async_trait;
-
-use super::{Transport, TransportError, TransportEvent};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Using channels for the communication between a `RpcClient` and `RpcServer` running on the same process.
 pub struct MemoryTransport {
@@ -60,11 +58,16 @@ impl Transport for MemoryTransport {
     async fn receive(&self) -> Result<TransportEvent, TransportError> {
         match self.receiver.recv().await {
             Ok(event) => {
-                let message = self.message_to_transport_event(event);
-                if let TransportEvent::Connect = message {
+                if !self.is_connected() {
                     self.connected.store(true, Ordering::SeqCst);
+                    if let Some((message_type, _)) = parse_header(&event) {
+                        // This is exclusively for the client
+                        if matches!(message_type, RpcMessageTypes::ServerReady) {
+                            return Ok(TransportEvent::Connect);
+                        }
+                    }
                 }
-                Ok(message)
+                Ok(TransportEvent::Message(event))
             }
             Err(_) => {
                 self.close().await;
@@ -76,7 +79,7 @@ impl Transport for MemoryTransport {
     async fn send(&self, message: Vec<u8>) -> Result<(), TransportError> {
         match self.sender.send(message).await {
             Ok(_) => Ok(()),
-            Err(_) => Err(TransportError::Connection),
+            Err(_) => Err(TransportError::Closed),
         }
     }
 

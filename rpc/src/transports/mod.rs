@@ -28,14 +28,15 @@ pub enum TransportEvent {
 
 #[derive(Debug)]
 pub enum TransportError {
-    Connection,
     /// Error while the underlying transport is running.
     ///
     /// For example: A peer reset the connection in a websocket connection
     ///
-    Internal,
+    Internal(Box<dyn std::error::Error + Send + Sync>),
     /// Transport is already closed
     Closed,
+    /// When the received message is not a binary
+    NotBinaryMessage,
 }
 
 #[async_trait]
