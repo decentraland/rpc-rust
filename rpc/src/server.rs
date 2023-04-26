@@ -702,7 +702,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
     ///
     /// # Arguments
     ///
-    /// * `transport` - The transport which sent a new message to be processed
+    /// * `transport_id` - The transport ID which sent a new message to be processed
     /// * `payload` - Vec of bytes containing the request payload encoded with protobuf
     /// * `message_type` - [`RpcMessageTypes`] the protocol type of the message
     /// * `message_number` - the number of the message derivided from the `message_identifier` in the [`crate::rpc_protocol::RpcMessageHeader`]
