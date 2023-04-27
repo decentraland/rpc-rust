@@ -5,12 +5,12 @@
 use crate::{
     messages_handlers::ClientMessagesHandler,
     rpc_protocol::{
-        parse::{build_message_identifier, parse_protocol_message, ParseErrors},
+        parse::{build_message_identifier, parse_header, parse_protocol_message, ParseErrors},
         CreatePort, CreatePortResponse, RemoteError, Request, RequestModule, RequestModuleResponse,
         Response, RpcMessageTypes, StreamMessage,
     },
     stream_protocol::{Generator, StreamProtocol},
-    transports::{Transport, TransportEvent},
+    transports::Transport,
 };
 use log::debug;
 use prost::Message;
@@ -82,16 +82,19 @@ impl<T: Transport + 'static> RpcClient<T> {
         }
     }
 
-    /// Sends an empty message through the Transport to flag the Transport as "connected"
+    /// Wait for the [`TransportEvent::Connect`] event which should be triggered when the [`RpcServer`](`crate::server::RpcServer`)
+    /// sends the [`ServerReady`](`crate::rpc_protocol::RpcMessageTypes::ServerReady`) message
     async fn establish_connection(transport: T) -> ClientResult<T> {
-        // Send empty message to notify connection
-        transport
-            .send(vec![0])
-            .await
-            .map_err(|_| ClientResultError::Client(ClientError::TransportError))?;
-
         match transport.receive().await {
-            Ok(TransportEvent::Connect) => Ok(transport),
+            Ok(data) => {
+                let (message_type, _) = parse_header(&data)
+                    .ok_or(ClientResultError::Client(ClientError::TransportError))?;
+                if matches!(message_type, RpcMessageTypes::ServerReady) {
+                    Ok(transport)
+                } else {
+                    Err(ClientResultError::Client(ClientError::TransportError))
+                }
+            }
             _ => Err(ClientResultError::Client(ClientError::TransportError)),
         }
     }

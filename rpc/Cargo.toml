@@ -1,6 +1,6 @@
 [package]
 name = "dcl-rpc"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2021"
 description = "Decentraland RPC Implementation"
 repository = "https://github.com/decentraland/rpc-rust"
@@ -21,8 +21,6 @@ prost = "0.11.5"
 tokio = {version = "1.0.0", default-features = false, features = ["io-util", "io-std", "macros", "net", "rt-multi-thread", "time", "sync"]}
 tokio-tungstenite = { version = "0.18.0", features = ["native-tls"], optional = true }
 tokio-util = "0.7.4"
-quinn = { version = "0.9.3", optional = true }
-rustls = { version = "0.20.8", optional = true, features = ["dangerous_configuration", "quic"] }
 proc-macro2 = { version = "1.0", optional = true }
 quote = { version = "1.0", optional = true }
 prost-build = { version = "0.11.5", optional = true }
@@ -36,6 +34,5 @@ default = ["codegen", "memory", "websockets", "server"]
 codegen = ["dep:quote", "dep:prost-build", "dep:proc-macro2"]
 memory = []
 websockets = ["dep:tokio-tungstenite"]
-quic = ["dep:quinn", "dep:rustls"]
 client = []
 server = []

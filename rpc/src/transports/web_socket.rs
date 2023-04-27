@@ -1,16 +1,14 @@
 //! Websockets as the wire between an [`RpcServer`](crate::server::RpcServer) and a [`RpcClient`](crate::client::RpcClient).
 //!
 //! This let the user get the most out of the advantages of using Decentraland RPC.
+use super::{Transport, TransportError, TransportMessage};
+use async_trait::async_trait;
 use futures_util::{
     stream::{SplitSink, SplitStream},
     SinkExt, StreamExt, TryStreamExt,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
-use tokio_tungstenite::{accept_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
-
-use super::{Transport, TransportError, TransportEvent};
-use async_trait::async_trait;
-use log::{debug, error};
+use log::{debug, error, info};
+use std::error::Error;
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::{
@@ -19,7 +17,11 @@ use tokio::{
     },
     task::JoinHandle,
 };
-use tokio_tungstenite::connect_async;
+use tokio_tungstenite::{
+    accept_async, connect_async,
+    tungstenite::{Error as TungsteniteError, Message},
+    MaybeTlsStream, WebSocketStream,
+};
 
 /// Write Stream Half of [`WebSocketStream`]
 type WriteStream =
@@ -46,7 +48,7 @@ pub struct WebSocketServer {
 ///
 /// And then attach turn the connection into a transport and attach it to the [`RpcServer`](crate::server::RpcServer)
 ///
-type OnConnectionListener = UnboundedReceiver<Result<Socket, TransportError>>;
+type OnConnectionListener = UnboundedReceiver<Result<Socket, Box<dyn Error + Send + Sync>>>;
 
 impl WebSocketServer {
     /// Set the configuration and the minimum for a new WebSocket Server
@@ -61,53 +63,61 @@ impl WebSocketServer {
     ///
     /// Each new connection will be sent through the `OnConnectionListener`, in order to be attached to the [`RpcServer`](crate::server::RpcServer)  as a [`WebSocketTransport`]
     ///
-    pub async fn listen(&mut self) -> Result<OnConnectionListener, TransportError> {
+    pub async fn listen(&mut self) -> Result<OnConnectionListener, std::io::Error> {
         // listen to given address
         let listener = TcpListener::bind(&self.address).await?;
         debug!("Listening on: {}", self.address);
 
-        let (tx_on_connection_listener, rx_on_connection_listener) = unbounded_channel();
+        let (tx_on_connection_listener, rx_on_connection_listener) =
+            unbounded_channel::<Result<Socket, Box<dyn Error + Send + Sync>>>();
 
         let join_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {
-                        let peer = if let Ok(perr) = stream.peer_addr() {
-                            perr
-                        } else {
-                            if tx_on_connection_listener
-                                .send(Err(TransportError::Connection))
-                                .is_err()
-                            {
-                                error!("WS Server: Error on sending the error to the listener")
+                        let peer = match stream.peer_addr() {
+                            Ok(peer) => peer,
+                            Err(err) => {
+                                error!(
+                                    "> WS Server > Error on get the remote address of the socket: {err:?}"
+                                );
+                                continue;
                             }
-                            continue;
                         };
 
-                        debug!("Peer address: {}", peer);
+                        debug!("> WS Server > Peer address: {}", peer);
                         let stream = MaybeTlsStream::Plain(stream);
-                        if let Ok(ws) = accept_async(stream).await {
-                            if tx_on_connection_listener.send(Ok(ws)).is_err() {
-                                error!("WS Server: Error on sending the new ws socket to listener")
+                        match accept_async(stream).await {
+                            Ok(ws) => {
+                                if tx_on_connection_listener.send(Ok(ws)).is_err() {
+                                    error!(
+                                            "> WS Server > Error on sending the new ws socket to listener"
+                                    );
+                                    break;
+                                }
                             }
-                        } else {
-                            if tx_on_connection_listener
-                                .send(Err(TransportError::Connection))
-                                .is_err()
-                            {
-                                error!("WS Server: Error on sending the error to the listener")
+                            Err(error) => {
+                                error!("> WS Server > Error on upgrading the socket: {error:?}");
+                                if tx_on_connection_listener
+                                    .send(Err(Box::new(error)))
+                                    .is_err()
+                                {
+                                    error!(
+                                        "> WS Server > Error on sending an error to the listener"
+                                    );
+                                    break;
+                                }
+                                continue;
                             }
-                            continue;
-                        };
+                        }
                     }
                     Err(error) => {
+                        error!("> WS Server > Error on accepting a stream {error:?}");
                         if tx_on_connection_listener
-                            .send(Err(TransportError::Connection))
+                            .send(Err(Box::new(error)))
                             .is_err()
                         {
-                            error!(
-                                "WS Server: Error on sending the error to the listener: {error:?}"
-                            )
+                            error!("> WS Server > Error on sending the error to the listener")
                         }
                     }
                 }
@@ -162,11 +172,6 @@ pub struct WebSocketTransport {
     /// It's inside a [`Mutex`] in order to meet the requirements of the [`Transport`] trait that doesn't have mutable methods so we should do _Interior Mutability_
     ///
     write: Mutex<WriteStream>,
-    /// Field to know if the socket is ready to start communicating with the other half
-    ///
-    /// It's an [`AtomicBool`] in order to meet the requirements of the [`Transport`] trait that doesn't have mutable methods so we should do _Interior Mutability_
-    ///
-    ready: AtomicBool,
 }
 
 impl WebSocketTransport {
@@ -176,41 +181,41 @@ impl WebSocketTransport {
         Self {
             read: Mutex::new(read),
             write: Mutex::new(write),
-            ready: AtomicBool::new(false),
         }
     }
 }
 
 #[async_trait]
 impl Transport for WebSocketTransport {
-    async fn receive(&self) -> Result<TransportEvent, TransportError> {
+    async fn receive(&self) -> Result<TransportMessage, TransportError> {
         match self.read.lock().await.try_next().await {
             Ok(Some(message)) => {
                 if message.is_binary() {
-                    let message = self.message_to_transport_event(message.into_data());
-                    if let TransportEvent::Connect = message {
-                        self.ready.store(true, Ordering::SeqCst);
-                    }
-                    return Ok(message);
+                    let message_data = message.into_data();
+                    return Ok(message_data);
                 } else {
                     // Ignore messages that are not binary
                     error!("> WebSocketTransport > Received message is not binary");
-                    return Err(TransportError::Internal);
+                    return Err(TransportError::NotBinaryMessage);
                 }
             }
             Ok(_) => {
-                debug!("> WebSocketTransport > Nothing yet")
+                error!("> WebSocketTransport > WEIRD: Ok(None)");
+                Err(TransportError::Closed)
             }
             Err(err) => {
                 error!(
                     "> WebSocketTransport > Failed to receive message {}",
                     err.to_string()
                 );
+                match err {
+                    TungsteniteError::ConnectionClosed | TungsteniteError::AlreadyClosed => {
+                        return Err(TransportError::Closed)
+                    }
+                    error => return Err(TransportError::Internal(Box::new(error))),
+                }
             }
         }
-        debug!("> WebSocketTransport > Closing transport...");
-        self.close().await;
-        Ok(TransportEvent::Close)
     }
 
     async fn send(&self, message: Vec<u8>) -> Result<(), TransportError> {
@@ -222,11 +227,11 @@ impl Transport for WebSocketTransport {
                     err.to_string()
                 );
 
-                use tokio_tungstenite::tungstenite::Error::*;
-
                 let error = match err {
-                    ConnectionClosed | AlreadyClosed => TransportError::Closed,
-                    _ => TransportError::Internal,
+                    TungsteniteError::ConnectionClosed | TungsteniteError::AlreadyClosed => {
+                        TransportError::Closed
+                    }
+                    error => TransportError::Internal(Box::new(error)),
                 };
 
                 Err(error)
@@ -236,19 +241,13 @@ impl Transport for WebSocketTransport {
     }
 
     async fn close(&self) {
-        if self.is_connected() {
-            match self.write.lock().await.close().await {
-                Ok(_) => {
-                    self.ready.store(false, Ordering::SeqCst);
-                }
-                _ => {
-                    debug!("> WebSocketTransport > Couldn't close tranport")
-                }
+        match self.write.lock().await.close().await {
+            Ok(_) => {
+                info!("> WebSocketTransport > Closed successfully")
+            }
+            Err(err) => {
+                error!("> WebSocketTransport > Error: Couldn't close tranport: {err:?}")
             }
         }
-    }
-
-    fn is_connected(&self) -> bool {
-        self.ready.load(Ordering::SeqCst)
     }
 }

@@ -16,8 +16,6 @@ tokio-util= { workspace = true }
 tokio-tungstenite= { workspace = true }
 bytes= { workspace = true }
 prost= { workspace = true }
-quinn= { workspace = true }
-rustls= { workspace = true }
 rcgen= { workspace = true }
 
 [build-dependencies]
