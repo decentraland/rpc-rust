@@ -53,8 +53,6 @@ pub struct WebSocketServer {
 ///
 type OnConnectionListener = UnboundedReceiver<Result<Socket, Box<dyn Error + Send + Sync>>>;
 
-pub enum WebSocketServerErrors {}
-
 impl WebSocketServer {
     /// Set the configuration and the minimum for a new WebSocket Server
     pub fn new(address: &str) -> Self {
