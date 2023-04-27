@@ -120,7 +120,7 @@ async fn run_memory_transport() {
         // Since it doesn't have to wait anything in background
 
         // The transport of the first client
-        match server.attach_transport(Arc::new(server_transport)) {
+        match server.attach_transport(Arc::new(server_transport)).await {
             Ok(_) => {
                 println!("> RpcServer > first transport attached successfully");
             }
@@ -130,7 +130,7 @@ async fn run_memory_transport() {
             }
         }
         // Attach the server-side transport for the second client
-        match server.attach_transport(Arc::new(server_2_transport)) {
+        match server.attach_transport(Arc::new(server_2_transport)).await {
             Ok(_) => {
                 println!("> RpcServer > second transport attached successfully");
             }
@@ -286,6 +286,7 @@ async fn run_with_dyn_transport() {
         // 6. Attach the dyn transport directly since we don't have to wait anything here, it's a memory transport.
         server
             .attach_transport(server_memory_transport_to_arc)
+            .await
             .unwrap();
 
         // 7. Spawns a background task to receive the WS connections that the WebSocket server are accepting to send it through a channel to the RpcServer. A RpcServer could have multiple clients
