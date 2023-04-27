@@ -715,13 +715,13 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
         message_type: RpcMessageTypes,
         message_number: u32,
     ) -> ServerResult<()> {
-        let transport = if let Some(transport) = self.transports.get(&transport_id) {
-            transport.clone()
-        } else {
-            return Err(ServerResultError::Internal(
+        let transport = self
+            .transports
+            .get(&transport_id)
+            .ok_or(ServerResultError::Internal(
                 ServerInternalError::TransportNotAttached,
-            ));
-        };
+            ))?
+            .clone();
         match message_type {
             RpcMessageTypes::Request => {
                 self.handle_request(transport, message_number, payload)
