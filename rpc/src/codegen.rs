@@ -106,6 +106,7 @@ impl RPCServiceGenerator {
         buf.push('\n');
     }
 
+    #[cfg(feature = "client")]
     fn generate_client_trait(&self, service: &Service, buf: &mut String) {
         // This is done with strings rather than tokens because Prost provides functions that
         // return doc comments as strings.
@@ -140,6 +141,7 @@ impl RPCServiceGenerator {
         format!("{}Server", service.name)
     }
 
+    #[cfg(feature = "server")]
     fn generate_server_trait(&self, service: &Service, buf: &mut String) {
         buf.push_str("use std::sync::Arc;\n");
         buf.push_str("use dcl_rpc::rpc_protocol::{RemoteErrorResponse};\n");
@@ -171,6 +173,7 @@ impl RPCServiceGenerator {
         buf.push_str("}\n");
     }
 
+    #[cfg(feature = "client")]
     fn generate_client_service(&self, service: &Service, buf: &mut String) {
         buf.push('\n');
         // Create struct
@@ -237,6 +240,7 @@ impl RPCServiceGenerator {
         buf.push_str("}\n");
     }
 
+    #[cfg(feature = "client")]
     fn generate_unary_call(&self, name: &str, append_request: bool) -> TokenStream {
         let request = if append_request {
             quote!(request)
@@ -250,6 +254,7 @@ impl RPCServiceGenerator {
         }
     }
 
+    #[cfg(feature = "client")]
     fn generate_server_streams_procedure(&self, name: &str, append_request: bool) -> TokenStream {
         let request = if append_request {
             quote!(request)
@@ -264,6 +269,7 @@ impl RPCServiceGenerator {
         }
     }
 
+    #[cfg(feature = "client")]
     fn generate_client_streams_procedure(&self, name: &str, append_request: bool) -> TokenStream {
         let request = if append_request {
             quote!(request)
@@ -278,6 +284,7 @@ impl RPCServiceGenerator {
         }
     }
 
+    #[cfg(feature = "client")]
     fn generate_bidir_streams_procedure(&self, name: &str, append_request: bool) -> TokenStream {
         let request = if append_request {
             quote!(request)
@@ -292,6 +299,7 @@ impl RPCServiceGenerator {
         }
     }
 
+    #[cfg(feature = "server")]
     fn generate_server_service(&self, service: &Service, buf: &mut String) {
         buf.push_str("use dcl_rpc::server::RpcServerPort;\n");
         buf.push_str("use dcl_rpc::service_module_definition::ServiceModuleDefinition;\n");
@@ -308,6 +316,7 @@ impl RPCServiceGenerator {
         buf.push_str("}\n");
     }
 
+    #[cfg(feature = "server")]
     fn generate_register_service(&self, service: &Service) -> TokenStream {
         let service_name = &service.name;
         let name = self.get_server_service_name(service);
@@ -342,6 +351,7 @@ impl RPCServiceGenerator {
         }
     }
 
+    #[cfg(feature = "server")]
     fn generate_add_unary_call(&self, method: &Method) -> TokenStream {
         let method_name: TokenStream = method.name.parse().unwrap();
         let proto_method_name = &method.proto_name;
@@ -372,6 +382,7 @@ impl RPCServiceGenerator {
         }
     }
 
+    #[cfg(feature = "server")]
     fn generate_add_server_streams_procedure(&self, method: &Method) -> TokenStream {
         let method_name: TokenStream = method.name.parse().unwrap();
         let proto_method_name = &method.proto_name;
@@ -407,6 +418,7 @@ impl RPCServiceGenerator {
         }
     }
 
+    #[cfg(feature = "server")]
     fn generate_add_client_streams_procedure(&self, method: &Method) -> TokenStream {
         let method_name: TokenStream = method.name.parse().unwrap();
         let proto_method_name = &method.proto_name;
@@ -442,6 +454,7 @@ impl RPCServiceGenerator {
         }
     }
 
+    #[cfg(feature = "server")]
     fn generate_add_bidir_streams_procedure(&self, method: &Method) -> TokenStream {
         let method_name: TokenStream = method.name.parse().unwrap();
         let proto_method_name = &method.proto_name;
