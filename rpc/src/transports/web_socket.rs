@@ -1,19 +1,14 @@
 //! Websockets as the wire between an [`RpcServer`](crate::server::RpcServer) and a [`RpcClient`](crate::client::RpcClient).
 //!
 //! This let the user get the most out of the advantages of using Decentraland RPC.
-
-use super::{Transport, TransportError, TransportEvent};
-use crate::rpc_protocol::{parse::parse_header, RpcMessageTypes};
+use super::{Transport, TransportError, TransportMessage};
 use async_trait::async_trait;
 use futures_util::{
     stream::{SplitSink, SplitStream},
     SinkExt, StreamExt, TryStreamExt,
 };
-use log::{debug, error};
-use std::{
-    error::Error,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use log::{debug, error, info};
+use std::error::Error;
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::{
@@ -23,7 +18,9 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_tungstenite::{
-    accept_async, connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream,
+    accept_async, connect_async,
+    tungstenite::{Error as TungsteniteError, Message},
+    MaybeTlsStream, WebSocketStream,
 };
 
 /// Write Stream Half of [`WebSocketStream`]
@@ -175,11 +172,6 @@ pub struct WebSocketTransport {
     /// It's inside a [`Mutex`] in order to meet the requirements of the [`Transport`] trait that doesn't have mutable methods so we should do _Interior Mutability_
     ///
     write: Mutex<WriteStream>,
-    /// Field to know if the socket is ready to start communicating with the other half
-    ///
-    /// It's an [`AtomicBool`] in order to meet the requirements of the [`Transport`] trait that doesn't have mutable methods so we should do _Interior Mutability_
-    ///
-    ready: AtomicBool,
 }
 
 impl WebSocketTransport {
@@ -189,28 +181,18 @@ impl WebSocketTransport {
         Self {
             read: Mutex::new(read),
             write: Mutex::new(write),
-            ready: AtomicBool::new(false),
         }
     }
 }
 
 #[async_trait]
 impl Transport for WebSocketTransport {
-    async fn receive(&self) -> Result<TransportEvent, TransportError> {
+    async fn receive(&self) -> Result<TransportMessage, TransportError> {
         match self.read.lock().await.try_next().await {
             Ok(Some(message)) => {
                 if message.is_binary() {
                     let message_data = message.into_data();
-                    if !self.is_connected() {
-                        self.ready.store(true, Ordering::SeqCst);
-                        if let Some((message_type, _)) = parse_header(&message_data) {
-                            // This is exclusively for the client
-                            if matches!(message_type, RpcMessageTypes::ServerReady) {
-                                return Ok(TransportEvent::Connect);
-                            }
-                        }
-                    }
-                    return Ok(TransportEvent::Message(message_data));
+                    return Ok(message_data);
                 } else {
                     // Ignore messages that are not binary
                     error!("> WebSocketTransport > Received message is not binary");
@@ -218,18 +200,22 @@ impl Transport for WebSocketTransport {
                 }
             }
             Ok(_) => {
-                debug!("> WebSocketTransport > Nothing yet")
+                error!("> WebSocketTransport > WEIRD: Ok(None)");
+                Err(TransportError::Closed)
             }
             Err(err) => {
                 error!(
                     "> WebSocketTransport > Failed to receive message {}",
                     err.to_string()
                 );
+                match err {
+                    TungsteniteError::ConnectionClosed | TungsteniteError::AlreadyClosed => {
+                        return Err(TransportError::Closed)
+                    }
+                    error => return Err(TransportError::Internal(Box::new(error))),
+                }
             }
         }
-        debug!("> WebSocketTransport > Closing transport...");
-        self.close().await;
-        Ok(TransportEvent::Close)
     }
 
     async fn send(&self, message: Vec<u8>) -> Result<(), TransportError> {
@@ -241,10 +227,10 @@ impl Transport for WebSocketTransport {
                     err.to_string()
                 );
 
-                use tokio_tungstenite::tungstenite::Error::*;
-
                 let error = match err {
-                    ConnectionClosed | AlreadyClosed => TransportError::Closed,
+                    TungsteniteError::ConnectionClosed | TungsteniteError::AlreadyClosed => {
+                        TransportError::Closed
+                    }
                     error => TransportError::Internal(Box::new(error)),
                 };
 
@@ -255,19 +241,13 @@ impl Transport for WebSocketTransport {
     }
 
     async fn close(&self) {
-        if self.is_connected() {
-            match self.write.lock().await.close().await {
-                Ok(_) => {
-                    self.ready.store(false, Ordering::SeqCst);
-                }
-                _ => {
-                    debug!("> WebSocketTransport > Couldn't close tranport")
-                }
+        match self.write.lock().await.close().await {
+            Ok(_) => {
+                info!("> WebSocketTransport > Closed successfully")
+            }
+            Err(err) => {
+                error!("> WebSocketTransport > Error: Couldn't close tranport: {err:?}")
             }
         }
-    }
-
-    fn is_connected(&self) -> bool {
-        self.ready.load(Ordering::SeqCst)
     }
 }

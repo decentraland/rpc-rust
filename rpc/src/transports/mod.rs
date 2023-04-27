@@ -7,27 +7,10 @@ use async_trait::async_trait;
 pub mod error;
 #[cfg(feature = "memory")]
 pub mod memory;
-#[cfg(feature = "quic")]
-pub mod quic;
 #[cfg(feature = "websockets")]
 pub mod web_socket;
 
-#[derive(Debug)]
-pub enum TransportEvent {
-    ///
-    /// The connect event is emited when the transport gets connected.
-    ///
-    /// The RpcServer is in charge to send the notification
-    /// to signal the client transport that it is connected.
-    ///
-    Connect,
-    /// the on_message callback is called when the transport receives a message
-    Message(Vec<u8>),
-    /// the error event is emited when the transport triggers an error
-    Error(String),
-    /// the close function will be called when it is decided to end the communication
-    Close,
-}
+pub type TransportMessage = Vec<u8>;
 
 #[derive(Debug)]
 pub enum TransportError {
@@ -44,8 +27,7 @@ pub enum TransportError {
 
 #[async_trait]
 pub trait Transport: Send + Sync {
-    async fn receive(&self) -> Result<TransportEvent, TransportError>;
+    async fn receive(&self) -> Result<TransportMessage, TransportError>;
     async fn send(&self, message: Vec<u8>) -> Result<(), TransportError>;
     async fn close(&self);
-    fn is_connected(&self) -> bool;
 }

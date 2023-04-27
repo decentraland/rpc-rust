@@ -1,6 +1,6 @@
 use dcl_rpc::{
     self,
-    transports::{memory::MemoryTransport, Transport, TransportEvent},
+    transports::{memory::MemoryTransport, Transport, TransportError},
 };
 
 #[tokio::test]
@@ -11,19 +11,13 @@ async fn ping_pong() {
     let _ = client.send(input.clone()).await;
 
     let message = server.receive().await.expect("can receive");
-    assert!(matches!(message, TransportEvent::Message(_)));
-    if let TransportEvent::Message(data) = message {
-        assert_eq!(&data, &input);
-        let _ = server.send(data).await;
-    }
+    assert_eq!(&message, &input);
+    let _ = server.send(message).await;
 
     let message = client.receive().await.expect("can receive");
-    assert!(matches!(message, TransportEvent::Message(_)));
-    if let TransportEvent::Message(data) = message {
-        assert_eq!(&data, &input);
-    }
+    assert_eq!(&message, &input);
 
     client.close().await;
-    let close_event = client.receive().await.expect("can receive");
-    assert!(matches!(close_event, TransportEvent::Close));
+    let close_event = client.receive().await.unwrap_err();
+    assert!(matches!(close_event, TransportError::Closed));
 }

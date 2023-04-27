@@ -16,11 +16,11 @@ use crate::{
         BiStreamsResponse, ClientStreamsResponse, ServerStreamsResponse, UnaryResponse,
     },
     stream_protocol::Generator,
-    transports::{Transport, TransportError, TransportEvent},
+    transports::{Transport, TransportError},
     CommonError,
 };
 use async_channel::Sender as AsyncChannelSender;
-use log::{debug, error};
+use log::{debug, error, info};
 use prost::Message;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{
@@ -451,7 +451,7 @@ impl<T: Transport + ?Sized + 'static> ClientMessagesHandler<T> {
     async fn process(&self) {
         loop {
             match self.transport.receive().await {
-                Ok(TransportEvent::Message(data)) => {
+                Ok(data) => {
                     let message_header = parse_header(&data);
                     match message_header {
                         Some((message_type, message_number)) => {
@@ -503,13 +503,12 @@ impl<T: Transport + ?Sized + 'static> ClientMessagesHandler<T> {
                         }
                     }
                 }
-                Ok(_) => {
-                    // Ignore another type of TransportEvent
-                    continue;
-                }
-                Err(_) => {
-                    error!("> ClientMessagesHandler > process > Error on receive, breaking the listening");
-                    break;
+                Err(error) => {
+                    error!("> ClientMessagesHandler > process > Error on receive, breaking the listening: {error:?}");
+                    if matches!(error, TransportError::Closed) {
+                        info!("> ClientMessagesHandler > process > closing...");
+                        break;
+                    }
                 }
             }
         }
