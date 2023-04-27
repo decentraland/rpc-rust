@@ -52,3 +52,25 @@ impl<T: RemoteErrorResponse> From<T> for RemoteError {
         }
     }
 }
+
+/// This functions works for filling a [`RemoteError`]. This is needed because:
+///
+/// When a server procedure returns a custom type as an error, which has to implement [`RemoteErrorResponse`](`super::RemoteErrorResponse`).
+///
+/// That custom type is then turned into a [`RemoteError`] but without a "true" value (`0`) in the `message_identifier` field
+///
+/// Because at the moment of conversion, the `message_number` is not available so the [`RemoteError`] has to be filled then.
+///
+pub(crate) fn fill_remote_error(remote_error: &mut RemoteError, message_number: u32) {
+    remote_error.message_identifier = parse::build_message_identifier(
+        RpcMessageTypes::RemoteErrorResponse as u32,
+        message_number,
+    );
+}
+
+/// Build the [`ServerReady`](`RpcMessageTypes::ServerReady`) message for the client
+pub(crate) fn server_ready_message() -> RpcMessageHeader {
+    RpcMessageHeader {
+        message_identifier: parse::build_message_identifier(RpcMessageTypes::ServerReady as u32, 0),
+    }
+}

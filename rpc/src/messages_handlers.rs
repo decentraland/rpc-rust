@@ -4,8 +4,9 @@
 //!
 use crate::{
     rpc_protocol::{
+        fill_remote_error,
         parse::{
-            build_message_identifier, fill_remote_error, parse_header, parse_message_identifier,
+            build_message_identifier, parse_header, parse_message_identifier,
             parse_protocol_message, ParseErrors,
         },
         RemoteError, Response, RpcMessageTypes, StreamMessage,

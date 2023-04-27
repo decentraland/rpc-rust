@@ -1,5 +1,5 @@
 //! Parsing functions for the messages that are sent on communications between two different ends using the Decentraland RPC implementation.
-use super::{RemoteError, RpcMessageHeader, RpcMessageTypes};
+use super::{fill_remote_error, RemoteError, RpcMessageHeader, RpcMessageTypes};
 use prost::Message;
 
 /// Build message identifier from type and number, and returns one number which it's the `message_identifier`
@@ -96,25 +96,6 @@ pub fn parse_protocol_message<R: Message + Default>(data: &[u8]) -> ParseMessage
     match message {
         Ok(message) => Ok((message_type as u32, message_number, message)),
         Err(_) => Err(ParseErrors::DecodingFailed),
-    }
-}
-
-/// This functions works for filling a [`RemoteError`]. This is needed because:
-///
-/// When a server procedure returns a custom type as an error, which has to implement [`RemoteErrorResponse`](`super::RemoteErrorResponse`).
-///
-/// That custom type is then turned into a [`RemoteError`] but without a "true" value (`0`) in the `message_identifier` field
-///
-/// Because at the moment of conversion, the `message_number` is not available so the [`RemoteError`] has to be filled then.
-///
-pub(crate) fn fill_remote_error(remote_error: &mut RemoteError, message_number: u32) {
-    remote_error.message_identifier =
-        build_message_identifier(RpcMessageTypes::RemoteErrorResponse as u32, message_number);
-}
-
-pub(crate) fn server_ready_message() -> RpcMessageHeader {
-    RpcMessageHeader {
-        message_identifier: build_message_identifier(RpcMessageTypes::ServerReady as u32, 0),
     }
 }
 
