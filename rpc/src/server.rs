@@ -41,13 +41,13 @@ pub enum ServerError {
     /// Error on decoding bytes (`Vec<u8>`) into a given type using [`crate::rpc_protocol::parse::parse_protocol_message`] or using the [`Message::decode`]
     ProtocolError,
     /// Port was not found in the server state, possibly not created
-    PortNotFound,
+    PortNotFound(u32),
     /// Error on loading a Module, unlikely to happen
     LoadModuleError,
     /// Module was not found, not registered in the server
-    ModuleNotFound,
+    ModuleNotFound(String),
     /// Given procedure's ID was not found
-    ProcedureNotFound,
+    ProcedureNotFound(u32),
     /// Unexpexted Error while responding back or Error on sending the original procedure response
     ///
     /// This error should be use as a "re-try" when a [`Transport::send`] failed.
@@ -58,9 +58,9 @@ impl RemoteErrorResponse for ServerError {
     fn error_code(&self) -> u32 {
         match self {
             Self::ProtocolError => 1,
-            Self::PortNotFound => 2,
-            Self::ModuleNotFound => 3,
-            Self::ProcedureNotFound => 4,
+            Self::PortNotFound(_) => 2,
+            Self::ModuleNotFound(_) => 3,
+            Self::ProcedureNotFound(_) => 4,
             Self::UnexpectedErrorOnTransport => 5,
             Self::LoadModuleError => 0, // it's unlikely to happen
         }
@@ -69,10 +69,10 @@ impl RemoteErrorResponse for ServerError {
     fn error_message(&self) -> String {
         match self {
             Self::ProtocolError => "Error on parsing a message. The content seems to be corrupted and not to meet the protocol requirements".to_string(),
-            Self::PortNotFound => "The given Port's ID was not found".to_string(),
+            Self::PortNotFound(id) => format!("The given Port's ID: {id} was not found"),
             Self::LoadModuleError => "Error on loading a module".to_string(),
-            Self::ModuleNotFound => "Module wasn't found on the server, check the name".to_string(),
-            Self::ProcedureNotFound => "Procedure's ID wasn't found on the server".to_string(),
+            Self::ModuleNotFound(module_name) => format!("Module wasn't found on the server, check the name: {module_name}"),
+            Self::ProcedureNotFound(id) => format!("Procedure's ID: {id} wasn't found on the server"),
             Self::UnexpectedErrorOnTransport => "Error on the transport while sending the original procedure response".to_string()
         }
     }
@@ -194,6 +194,8 @@ pub struct RpcServer<Context, T: Transport + ?Sized> {
     server_events_receiver: Option<UnboundedReceiver<ServerEvents<T>>>,
     /// The id that will be assigned if a new transport is a attached
     next_transport_id: u32,
+    /// THe id that will be assigned to a port when it's created.
+    next_port_id: u32,
 }
 impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<Context, T> {
     pub fn create(ctx: Context) -> Self {
@@ -207,6 +209,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
             context: Arc::new(ctx),
             messages_handler: Arc::new(ServerMessagesHandler::new()),
             next_transport_id: 1,
+            next_port_id: 1,
             server_events_sender: ServerEventsSender(channel.0),
             server_events_receiver: Some(channel.1),
         }
@@ -387,10 +390,10 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                         }
                                     }
                                     Err(error) => {
-                                        error!(
-                                            "> From a Transport > Error on receiving: {error:?}"
-                                        );
                                         if matches!(error, TransportError::Closed) {
+                                            error!(
+                                                "> From a Transport > Transport is already closed. Breaking..."
+                                            );
                                             if tx_cloned
                                                 .send(TransportNotification::CloseTransport(id))
                                                 .is_err()
@@ -400,6 +403,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                             }
                                             break;
                                         }
+                                        error!("> From a Transport > Error on receiving {error:?}");
                                     }
                                 }
                             }
@@ -558,7 +562,9 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
 
                 Ok(())
             }
-            _ => Err(ServerResultError::External(ServerError::PortNotFound)),
+            _ => Err(ServerResultError::External(ServerError::PortNotFound(
+                request.port_id,
+            ))),
         }
     }
 
@@ -605,7 +611,9 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                 return Err(ServerResultError::External(ServerError::LoadModuleError));
             }
         } else {
-            return Err(ServerResultError::External(ServerError::PortNotFound));
+            return Err(ServerResultError::External(ServerError::PortNotFound(
+                request_module.port_id,
+            )));
         }
 
         Ok(())
@@ -627,7 +635,8 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
         message_number: u32,
         payload: Vec<u8>,
     ) -> ServerResult<()> {
-        let port_id = (self.ports.len() + 1) as u32;
+        let port_id = self.next_port_id;
+        self.next_port_id += 1;
         let create_port = CreatePort::decode(payload.as_slice())
             .map_err(|_| ServerResultError::External(ServerError::ProtocolError))?;
         let port_name = create_port.port_name;
@@ -784,7 +793,9 @@ impl<Context> RpcServerPort<Context> {
                 .expect("Already checked."))
         } else {
             match self.registered_modules.get(&module_name) {
-                None => Err(ServerResultError::External(ServerError::ModuleNotFound)),
+                None => Err(ServerResultError::External(ServerError::ModuleNotFound(
+                    module_name,
+                ))),
                 Some(module_generator) => {
                     let mut server_module_declaration = ServerModuleDeclaration {
                         procedures: Vec::new(),
@@ -823,7 +834,9 @@ impl<Context> RpcServerPort<Context> {
     fn get_procedure(&self, procedure_id: u32) -> ServerResult<ProcedureDefinition<Context>> {
         match self.procedures.get(&procedure_id) {
             Some(procedure_definition) => Ok(procedure_definition.clone()),
-            _ => Err(ServerResultError::External(ServerError::ProcedureNotFound)),
+            _ => Err(ServerResultError::External(ServerError::ProcedureNotFound(
+                procedure_id,
+            ))),
         }
     }
 }
