@@ -82,9 +82,9 @@ impl<T: Transport + 'static> RpcClient<T> {
         }
     }
 
-    /// Sends an empty message through the Transport to flag the Transport as "connected"
+    /// Wait for the [`TransportEvent::Connect`] event which should be triggered when the [`RpcServer`](`crate::server::RpcServer`)
+    /// sends the [`ServerReady`](`crate::rpc_protocol::RpcMessageTypes::ServerReady`) message
     async fn establish_connection(transport: T) -> ClientResult<T> {
-        // Send empty message to notify connection
         match transport.receive().await {
             Ok(TransportEvent::Connect) => Ok(transport),
             _ => Err(ClientResultError::Client(ClientError::TransportError)),
