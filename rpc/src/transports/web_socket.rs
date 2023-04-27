@@ -100,16 +100,16 @@ impl WebSocketServer {
                                 }
                             }
                             Err(error) => {
+                                error!("> WS Server > Error on upgrading the socket: {error:?}");
                                 if tx_on_connection_listener
                                     .send(Err(Box::new(error)))
                                     .is_err()
                                 {
                                     error!(
-                                            "> WS Server > Error on sending the new ws socket to listener"
+                                        "> WS Server > Error on sending an error to the listener"
                                     );
                                     break;
                                 }
-                                error!("> WS Server > Error on upgrading the socket");
                                 continue;
                             }
                         }
