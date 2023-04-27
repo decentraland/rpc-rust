@@ -4,18 +4,14 @@ use dcl_rpc::{
     stream_protocol::Generator,
     transports::{
         memory::MemoryTransport,
-        quic::QuicTransport,
         web_socket::{WebSocketClient, WebSocketServer, WebSocketTransport},
         Transport,
     },
 };
 use integration::{
-    service::book_service,
-    setup_quic::{configure_client, generate_self_signed_cert},
-    Book, BookServiceClient, BookServiceClientDefinition, BookServiceRegistration, GetBookRequest,
-    MyExampleContext, QueryBooksRequest,
+    service::book_service, Book, BookServiceClient, BookServiceClientDefinition,
+    BookServiceRegistration, GetBookRequest, MyExampleContext, QueryBooksRequest,
 };
-use quinn::ServerConfig;
 use std::{env, sync::Arc, time::Duration};
 use tokio::{join, select, sync::RwLock, time::sleep};
 use tokio_util::sync::CancellationToken;
@@ -59,35 +55,6 @@ fn create_memory_transports() -> (MemoryTransport, MemoryTransport) {
     MemoryTransport::create()
 }
 
-#[allow(dead_code)]
-/// Creates a QUIC Transport for both sides
-async fn create_quic_transports() -> (QuicTransport, QuicTransport) {
-    let server_handle = tokio::spawn(async {
-        let (cert, keys) = generate_self_signed_cert();
-        QuicTransport::create_server(
-            "0.0.0.0:8080",
-            ServerConfig::with_single_cert(vec![cert], keys).expect("Can create server config"),
-        )
-        .await
-    });
-    let client_handle = tokio::spawn(async {
-        let client_config = configure_client();
-        QuicTransport::create_client("127.0.0.1:0", "127.0.0.1:8080", "localhost", client_config)
-            .await
-    });
-
-    let server = server_handle
-        .await
-        .expect("Thread to finish")
-        .expect("Server to accept client connection");
-
-    let client = client_handle
-        .await
-        .expect("Thread to finish")
-        .expect("Client to establish connection");
-    (client, server)
-}
-
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = env::args().collect();
@@ -103,11 +70,6 @@ async fn main() {
             println!("--- Running example with &dyn Transport ---");
             run_with_dyn_transport().await;
         }
-        // TODO: fix QUIC transport (similar to ws fix)
-        // } else if example == "quic" {
-        //     // println!("--- Running example with QUIC Transports ---");
-        //     // run_with_transports(TransportType::QUIC).await;
-        //}
     } else {
         println!("--- Running example with Memory Transports ---");
         run_memory_transport().await;
@@ -119,9 +81,6 @@ async fn main() {
         //
         println!("--- Running example with &dyn Transport ---");
         run_with_dyn_transport().await;
-        // TODO: fix QUIC transport (similar to ws fix)
-        // println!("--- Running example with QUIC Transports ---");
-        // run_with_transports(TransportType::QUIC).await;
     }
 }
 
@@ -250,7 +209,7 @@ async fn run_ws_transport() {
         tokio::spawn(async move {
             while let Some(Ok(connection)) = connection_listener.recv().await {
                 let transport = WebSocketTransport::new(connection);
-                let transport_to_arc: Arc<dyn Transport> = Arc::new(transport);
+                let transport_to_arc = Arc::new(transport);
                 match server_events_sender.send_attach_transport(transport_to_arc) {
                     Ok(_) => {
                         println!("> RpcServer > transport attached successfully");
