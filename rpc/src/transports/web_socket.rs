@@ -5,9 +5,9 @@ use super::{Transport, TransportError, TransportMessage};
 use async_trait::async_trait;
 use futures_util::{
     stream::{SplitSink, SplitStream},
-    SinkExt, StreamExt, TryStreamExt,
+    SinkExt, StreamExt,
 };
-use log::{debug, error, info};
+use log::{debug, error};
 use std::error::Error;
 use tokio::{
     net::{TcpListener, TcpStream},
@@ -188,22 +188,21 @@ impl WebSocketTransport {
 #[async_trait]
 impl Transport for WebSocketTransport {
     async fn receive(&self) -> Result<TransportMessage, TransportError> {
-        match self.read.lock().await.try_next().await {
-            Ok(Some(message)) => {
+        match self.read.lock().await.next().await {
+            Some(Ok(message)) => {
                 if message.is_binary() {
                     let message_data = message.into_data();
                     return Ok(message_data);
                 } else {
+                    if message.is_close() {
+                        return Err(TransportError::Closed);
+                    }
                     // Ignore messages that are not binary
                     error!("> WebSocketTransport > Received message is not binary");
                     return Err(TransportError::NotBinaryMessage);
                 }
             }
-            Ok(_) => {
-                error!("> WebSocketTransport > WEIRD: Ok(None)");
-                Err(TransportError::Closed)
-            }
-            Err(err) => {
+            Some(Err(err)) => {
                 error!(
                     "> WebSocketTransport > Failed to receive message {}",
                     err.to_string()
@@ -214,6 +213,10 @@ impl Transport for WebSocketTransport {
                     }
                     error => return Err(TransportError::Internal(Box::new(error))),
                 }
+            }
+            None => {
+                error!("> WebSocketTransport > None received > Closing...");
+                return Err(TransportError::Closed);
             }
         }
     }
@@ -243,7 +246,7 @@ impl Transport for WebSocketTransport {
     async fn close(&self) {
         match self.write.lock().await.close().await {
             Ok(_) => {
-                info!("> WebSocketTransport > Closed successfully")
+                debug!("> WebSocketTransport > Closed successfully")
             }
             Err(err) => {
                 error!("> WebSocketTransport > Error: Couldn't close tranport: {err:?}")
