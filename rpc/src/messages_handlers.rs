@@ -39,6 +39,7 @@ use tokio_util::sync::CancellationToken;
 /// It spawns a background tasks to process every request
 ///
 #[derive(Default)]
+#[cfg(feature = "server")]
 pub struct ServerMessagesHandler {
     /// Data structure in charge of handling all messages related to streams
     pub streams_handler: Arc<StreamsHandler>,
@@ -46,6 +47,7 @@ pub struct ServerMessagesHandler {
     listeners: Mutex<HashMap<u32, AsyncChannelSender<StreamPackage>>>,
 }
 
+#[cfg(feature = "server")]
 impl ServerMessagesHandler {
     pub fn new() -> Self {
         Self {
@@ -380,6 +382,7 @@ type StreamPackage = (RpcMessageTypes, u32, StreamMessage);
 /// It's the data structure that actually owns the Transport attached to a `RpcClient`. The transport is drilled down up to get to `ClientMEssagesHandler`
 ///
 ///
+#[cfg(feature = "client")]
 pub struct ClientMessagesHandler<T: Transport + ?Sized> {
     /// Transport received by a `RpcClient`
     pub transport: Arc<T>,
@@ -412,6 +415,7 @@ pub struct ClientMessagesHandler<T: Transport + ?Sized> {
     process_cancellation_token: CancellationToken,
 }
 
+#[cfg(feature = "client")]
 impl<T: Transport + ?Sized + 'static> ClientMessagesHandler<T> {
     pub fn new(transport: Arc<T>) -> Self {
         Self {
@@ -504,7 +508,7 @@ impl<T: Transport + ?Sized + 'static> ClientMessagesHandler<T> {
                     }
                 }
                 Err(error) => {
-                    error!("> ClientMessagesHandler > process > Error on receive, breaking the listening: {error:?}");
+                    error!("> ClientMessagesHandler > process > Error on receive {error:?}");
                     if matches!(error, TransportError::Closed) {
                         info!("> ClientMessagesHandler > process > closing...");
                         break;
