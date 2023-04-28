@@ -2,8 +2,11 @@ use crate::{
     Book, BookServiceServer, ClientStreamRequest, GetBookRequest, MyExampleContext,
     QueryBooksRequest, ServerStreamResponse,
 };
-use dcl_rpc::{rpc_protocol::RemoteErrorResponse, stream_protocol::Generator};
-use std::{sync::Arc, time::Duration};
+use dcl_rpc::{
+    rpc_protocol::RemoteErrorResponse, service_module_definition::ProcedureContext,
+    stream_protocol::Generator,
+};
+use std::time::Duration;
 use tokio::time::sleep;
 
 pub struct MyBookService {}
@@ -13,9 +16,9 @@ impl BookServiceServer<MyExampleContext, BookServiceError> for MyBookService {
     async fn send_book(
         &self,
         book: Book,
-        ctx: Arc<MyExampleContext>,
+        ctx: ProcedureContext<MyExampleContext>,
     ) -> Result<(), BookServiceError> {
-        let mut books = ctx.hardcoded_database.write().await;
+        let mut books = ctx.server_context.hardcoded_database.write().await;
 
         // Simulate DB operation
         println!(
@@ -29,7 +32,10 @@ impl BookServiceServer<MyExampleContext, BookServiceError> for MyBookService {
         Ok(())
     }
 
-    async fn get_sample_book(&self, _ctx: Arc<MyExampleContext>) -> Result<Book, BookServiceError> {
+    async fn get_sample_book(
+        &self,
+        _ctx: ProcedureContext<MyExampleContext>,
+    ) -> Result<Book, BookServiceError> {
         Ok(Book {
             author: "mr jobs".to_string(),
             title: "Rust: how do futures work under the hood?".to_string(),
@@ -40,9 +46,9 @@ impl BookServiceServer<MyExampleContext, BookServiceError> for MyBookService {
     async fn get_book(
         &self,
         request: GetBookRequest,
-        ctx: Arc<MyExampleContext>,
+        ctx: ProcedureContext<MyExampleContext>,
     ) -> Result<Book, BookServiceError> {
-        let books = ctx.hardcoded_database.read().await;
+        let books = ctx.server_context.hardcoded_database.read().await;
 
         // Simulate DB operation
         println!(
@@ -69,13 +75,13 @@ impl BookServiceServer<MyExampleContext, BookServiceError> for MyBookService {
     async fn query_books(
         &self,
         request: QueryBooksRequest,
-        ctx: Arc<MyExampleContext>,
+        ctx: ProcedureContext<MyExampleContext>,
     ) -> Result<ServerStreamResponse<Book>, BookServiceError> {
         println!("> BookService > server stream > QueryBooks");
         let (generator, generator_yielder) = Generator::create();
         // Spawn for a quick response
         tokio::spawn(async move {
-            let books = ctx.hardcoded_database.read().await;
+            let books = ctx.server_context.hardcoded_database.read().await;
             for book in &*books {
                 sleep(Duration::from_secs(1)).await;
                 if book.author.contains(&request.author_prefix) {
@@ -90,9 +96,9 @@ impl BookServiceServer<MyExampleContext, BookServiceError> for MyBookService {
     async fn get_book_stream(
         &self,
         mut request: ClientStreamRequest<GetBookRequest>,
-        ctx: Arc<MyExampleContext>,
+        ctx: ProcedureContext<MyExampleContext>,
     ) -> Result<Book, BookServiceError> {
-        let books = ctx.hardcoded_database.read().await;
+        let books = ctx.server_context.hardcoded_database.read().await;
 
         while request.next().await.is_some() {}
 
@@ -102,13 +108,13 @@ impl BookServiceServer<MyExampleContext, BookServiceError> for MyBookService {
     async fn query_books_stream(
         &self,
         mut request: ClientStreamRequest<GetBookRequest>,
-        ctx: Arc<MyExampleContext>,
+        ctx: ProcedureContext<MyExampleContext>,
     ) -> Result<ServerStreamResponse<Book>, BookServiceError> {
         println!("> BookService > bidir stream > QueryBooksStream");
         let (generator, generator_yielder) = Generator::create();
         // Spawn for a quick response
         tokio::spawn(async move {
-            let books = ctx.hardcoded_database.read().await;
+            let books = ctx.server_context.hardcoded_database.read().await;
             while let Some(message) = request.next().await {
                 let book = books.iter().find(|book| book.isbn == message.isbn);
                 if let Some(book) = book {

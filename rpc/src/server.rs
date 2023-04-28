@@ -1,11 +1,5 @@
 //! This module contains all the types needed to have a running [`RpcServer`].
 //
-use std::{collections::HashMap, sync::Arc, u8};
-
-use log::{debug, error};
-use prost::{alloc::vec::Vec, Message};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-
 use crate::{
     messages_handlers::ServerMessagesHandler,
     rpc_protocol::{
@@ -15,15 +9,25 @@ use crate::{
         RemoteError, RemoteErrorResponse, Request, RequestModule, RequestModuleResponse,
         RpcMessageTypes,
     },
-    service_module_definition::{ProcedureDefinition, ServiceModuleDefinition},
+    service_module_definition::{ProcedureContext, ProcedureDefinition, ServiceModuleDefinition},
     stream_protocol::StreamProtocol,
     transports::{Transport, TransportError, TransportMessage},
 };
+use log::{debug, error};
+use prost::{alloc::vec::Vec, Message};
+use std::{collections::HashMap, sync::Arc, u8};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 /// Handler that runs each time that a port is created
 type PortHandlerFn<Context> = dyn Fn(&mut RpcServerPort<Context>) + Send + Sync + 'static;
 
-type OnTransportClosesHandler<Transport> = dyn Fn(Arc<Transport>) + Send + Sync + 'static;
+type TransportHandler<Transport> = dyn Fn(Arc<Transport>, TransportID) + Send + Sync + 'static;
+
+/// Handler that runs each time that a transport was closed
+type OnTransportClosesHandler<Transport> = TransportHandler<Transport>;
+
+/// Handler that run each time that a transport is put to run
+type OnTransportConnected = dyn Fn(TransportID) + Send + Sync + 'static;
 
 /// Error returned by a server function could be an error which it's possible and useful to communicate or not.
 #[derive(Debug)]
@@ -172,11 +176,14 @@ pub struct RpcServer<Context, T: Transport + ?Sized> {
     transports: HashMap<TransportID, Arc<T>>,
     /// The handler executed when a new port is created
     port_creation_handler: Option<Box<PortHandlerFn<Context>>>,
-    /// The handler executed when a transport is closed.
+    /// The handler is executed when a transport is closed.
     ///
     /// It works for cleaning resources that may be tied to or depends on the transport's connection.
-    ///
     on_transport_closes_handler: Option<Box<OnTransportClosesHandler<T>>>,
+    /// The handler is executed when a transport is put to run.
+    ///
+    /// It works for executing a function which receives the Transport ID assigned by the server to a new running transport
+    on_transport_connected_handler: Option<Box<OnTransportConnected>>,
     /// Ports registered in the [`RpcServer`]
     ports: HashMap<PortID, RpcServerPort<Context>>,
     ports_by_transport_id: HashMap<TransportID, Vec<PortID>>,
@@ -203,6 +210,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
         Self {
             transports: HashMap::new(),
             port_creation_handler: None,
+            on_transport_connected_handler: None,
             on_transport_closes_handler: None,
             ports: HashMap::new(),
             ports_by_transport_id: HashMap::new(),
@@ -253,6 +261,9 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
         }
         self.server_events_sender
             .send_new_transport(current_id, transport.clone())?;
+        if let Some(handler) = &self.on_transport_connected_handler {
+            handler(current_id);
+        }
         self.transports.insert(current_id, transport);
         self.next_transport_id += 1;
         Ok(())
@@ -326,7 +337,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                     TransportNotification::CloseTransport(id) => {
                         if let Some(transport) = self.transports.remove(&id) {
                             if let Some(on_close_handler) = &self.on_transport_closes_handler {
-                                on_close_handler(transport);
+                                on_close_handler(transport, id);
                             }
                             // Get port ids to drop ports
                             if let Some(port_ids) = self.ports_by_transport_id.remove(&id) {
@@ -441,9 +452,19 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
     /// This could be useful when there are resources that may be tied to or depends on a transport's connection
     pub fn set_on_transport_closes_handler<H>(&mut self, handler: H)
     where
-        H: Fn(Arc<T>) + Send + Sync + 'static,
+        H: Fn(Arc<T>, TransportID) + Send + Sync + 'static,
     {
         self.on_transport_closes_handler = Some(Box::new(handler));
+    }
+
+    /// Set a handler is executed when a transport is put to run.
+    ///
+    /// It works for executing a function which receives the Transport ID assigned by the server to a new running transport
+    pub fn set_on_transport_connected_handler<H>(&mut self, handler: H)
+    where
+        H: Fn(TransportID) + Send + Sync + 'static,
+    {
+        self.on_transport_connected_handler = Some(Box::new(handler));
     }
 
     /// Handle the requests for a procedure call
@@ -456,6 +477,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
     async fn handle_request(
         &self,
         transport: Arc<T>,
+        transport_id: TransportID,
         message_number: u32,
         payload: Vec<u8>,
     ) -> ServerResult<()> {
@@ -464,9 +486,12 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
 
         match self.ports.get(&request.port_id) {
             Some(port) => {
-                let procedure_ctx = self.context.clone();
                 let transport_cloned = transport.clone();
                 let procedure_handler = port.get_procedure(request.procedure_id)?;
+                let procedure_ctx = ProcedureContext {
+                    server_context: self.context.clone(),
+                    transport_id,
+                };
 
                 match procedure_handler {
                     ProcedureDefinition::Unary(procedure_handler) => {
@@ -709,7 +734,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
             .clone();
         match message_type {
             RpcMessageTypes::Request => {
-                self.handle_request(transport, message_number, payload)
+                self.handle_request(transport, transport_id, message_number, payload)
                     .await?
             }
             RpcMessageTypes::RequestModule => {

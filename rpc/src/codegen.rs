@@ -144,7 +144,7 @@ impl RPCServiceGenerator {
     #[cfg(feature = "server")]
     fn generate_server_trait(&self, service: &Service, buf: &mut String) {
         buf.push_str("use std::sync::Arc;\n");
-        buf.push_str("use dcl_rpc::rpc_protocol::{RemoteErrorResponse};\n");
+        buf.push_str("use dcl_rpc::{rpc_protocol::{RemoteErrorResponse}, service_module_definition::ProcedureContext};\n");
         // This is done with strings rather than tokens because Prost provides functions that
         // return doc comments as strings.
         buf.push('\n');
@@ -498,7 +498,7 @@ fn extract_name_token(method: &Method) -> proc_macro2::Ident {
 
 fn extract_context_token(params: &MethodSigTokensParams) -> TokenStream {
     match params.with_context {
-        true => quote! {, context: Arc<Context>},
+        true => quote! {, context: ProcedureContext<Context>},
         false => TokenStream::default(),
     }
 }
