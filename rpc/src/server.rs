@@ -93,6 +93,7 @@ type PortID = u32;
 
 type TransportEvent<T, M> = (T, M);
 
+#[derive(Debug)]
 /// Events that the [`RpcServer`] has to react to
 enum ServerEvents<T: Transport + ?Sized> {
     AttachTransport(Arc<T>),
@@ -197,6 +198,7 @@ pub struct RpcServer<Context, T: Transport + ?Sized> {
     /// THe id that will be assigned to a port when it's created.
     next_port_id: u32,
 }
+
 impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<Context, T> {
     pub fn create(ctx: Context) -> Self {
         let channel = unbounded_channel();
@@ -584,7 +586,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
         let request_module = RequestModule::decode(payload.as_slice())
             .map_err(|_| ServerResultError::External(ServerError::ProtocolError))?;
         if let Some(port) = self.ports.get_mut(&request_module.port_id) {
-            if let Ok(server_module_declaration) = port.load_module(request_module.module_name) {
+            if let Ok(server_module_declaration) = port.load_module(&request_module.module_name) {
                 let mut procedures: Vec<ModuleProcedure> = Vec::default();
                 for procedure in &server_module_declaration.procedures {
                     let module_procedure = ModuleProcedure {
@@ -636,21 +638,14 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
         payload: Vec<u8>,
     ) -> ServerResult<()> {
         let port_id = self.next_port_id;
-        self.next_port_id += 1;
         let create_port = CreatePort::decode(payload.as_slice())
             .map_err(|_| ServerResultError::External(ServerError::ProtocolError))?;
         let port_name = create_port.port_name;
-        let mut port = RpcServerPort::new(port_name.clone());
+        let mut port = RpcServerPort::new(&port_name);
 
         if let Some(handler) = &self.port_creation_handler {
             handler(&mut port);
         }
-
-        self.ports.insert(port_id, port);
-        self.ports_by_transport_id
-            .entry(transport_id)
-            .and_modify(|ports| ports.push(port_id))
-            .or_insert_with(|| vec![port_id]);
 
         let response = CreatePortResponse {
             message_identifier: build_message_identifier(
@@ -664,6 +659,13 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
             .send(response)
             .await
             .map_err(|_| ServerResultError::Internal(ServerInternalError::TransportError))?;
+
+        self.next_port_id += 1;
+        self.ports.insert(port_id, port);
+        self.ports_by_transport_id
+            .entry(transport_id)
+            .and_modify(|ports| ports.push(port_id))
+            .or_insert_with(|| vec![port_id]);
 
         Ok(())
     }
@@ -760,41 +762,44 @@ pub struct RpcServerPort<Context> {
     loaded_modules: HashMap<String, ServerModuleDeclaration>,
     /// Procedures contains the id and the handler for each procedure
     procedures: HashMap<u32, ProcedureDefinition<Context>>,
+    /// Global Procedure ID
+    next_procedure_id: u32,
 }
 
 impl<Context> RpcServerPort<Context> {
-    fn new(name: String) -> Self {
+    fn new(name: &str) -> Self {
         RpcServerPort {
-            name,
+            name: name.to_string(),
             registered_modules: HashMap::new(),
             loaded_modules: HashMap::new(),
             procedures: HashMap::new(),
+            next_procedure_id: 1,
         }
     }
 
     /// Just register the module in the port
     pub fn register_module(
         &mut self,
-        module_name: String,
+        module_name: &str,
         service_definition: ServiceModuleDefinition<Context>,
     ) {
         self.registered_modules
-            .insert(module_name, service_definition);
+            .insert(module_name.to_string(), service_definition);
     }
 
     /// It checks if the module is already loaded and return it.
     ///
     /// Otherwise, it will get the module definition from the `registered_modules` and load it
-    fn load_module(&mut self, module_name: String) -> ServerResult<&ServerModuleDeclaration> {
-        if self.loaded_modules.contains_key(&module_name) {
+    fn load_module(&mut self, module_name: &str) -> ServerResult<&ServerModuleDeclaration> {
+        if self.loaded_modules.contains_key(module_name) {
             Ok(self
                 .loaded_modules
-                .get(&module_name)
+                .get(module_name)
                 .expect("Already checked."))
         } else {
-            match self.registered_modules.get(&module_name) {
+            match self.registered_modules.get(module_name) {
                 None => Err(ServerResultError::External(ServerError::ModuleNotFound(
-                    module_name,
+                    module_name.to_string(),
                 ))),
                 Some(module_generator) => {
                     let mut server_module_declaration = ServerModuleDeclaration {
@@ -802,10 +807,9 @@ impl<Context> RpcServerPort<Context> {
                     };
 
                     let definitions = module_generator.get_definitions();
-                    let mut procedure_id = 1;
 
                     for (procedure_name, procedure_definition) in definitions {
-                        let current_id = procedure_id;
+                        let current_id = self.next_procedure_id;
                         self.procedures
                             .insert(current_id, procedure_definition.clone());
                         server_module_declaration
@@ -814,15 +818,16 @@ impl<Context> RpcServerPort<Context> {
                                 procedure_name: procedure_name.clone(),
                                 procedure_id: current_id,
                             });
-                        procedure_id += 1
+                        self.next_procedure_id += 1
                     }
 
                     self.loaded_modules
-                        .insert(module_name.clone(), server_module_declaration);
+                        .insert(module_name.to_string(), server_module_declaration);
 
                     let module_definition = self
                         .loaded_modules
-                        .get(&module_name)
+                        .get(module_name)
+                        // Wont Happen
                         .ok_or(ServerResultError::External(ServerError::LoadModuleError))?;
                     Ok(module_definition)
                 }
@@ -847,8 +852,621 @@ pub struct ServerModuleProcedure {
     pub procedure_id: u32,
 }
 
+#[derive(Debug)]
 /// Used to store all the procedures in the `loaded_modules` fields inside [`RpcServerPort`]
 pub struct ServerModuleDeclaration {
     /// Array with all the module's (service) procedures
     pub procedures: Vec<ServerModuleProcedure>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    mod rpc_server {
+        use std::sync::{atomic::AtomicBool, Mutex};
+
+        use super::*;
+        use crate::{stream_protocol::Generator, transports::memory::MemoryTransport};
+
+        #[tokio::test]
+        async fn new_transport_attached_should_work_correctly() {
+            let (client_transport, server_transport) = MemoryTransport::create();
+
+            let mut server = RpcServer::create(());
+
+            server
+                .new_transport_attached(Arc::new(server_transport))
+                .await
+                .unwrap(); // Unwrap -> Should not fail
+
+            // Asserting RpcServer state
+            assert_eq!(server.next_transport_id, 2);
+            assert_eq!(server.transports.len(), 1);
+
+            // Asserting the events that must have happened in the server
+            let mut server_events_receiver = server.server_events_receiver.unwrap(); // Unwrap -> Should not fail
+            let event_received = server_events_receiver.recv().await.unwrap(); // Unwrap -> Should not fail
+            let match_event = matches!(event_received, ServerEvents::NewTransport(1, _));
+            assert!(match_event);
+
+            // Asserting the message that the client should have received because of being attached to the server
+            let client_message = client_transport.receive().await.unwrap(); // Unwrap -> Should not fail
+            let is_server_ready_message = matches!(
+                parse_header(&client_message).unwrap().0,
+                RpcMessageTypes::ServerReady
+            );
+            assert!(is_server_ready_message)
+        }
+
+        #[tokio::test]
+        async fn new_transport_attached_should_fail() {
+            let (client_transport, server_transport) = MemoryTransport::create();
+
+            let mut server = RpcServer::create(());
+
+            drop(client_transport);
+
+            // Asserting that the function should return an error
+            let err = server
+                .new_transport_attached(Arc::new(server_transport))
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                ServerResultError::Internal(ServerInternalError::TransportError)
+            ));
+
+            // Asserting the events that must have happened in the server
+            let mut server_events_receiver = server.server_events_receiver.unwrap(); // Unwrap -> Should not fail
+            assert!(server_events_receiver.try_recv().is_err());
+            // Asserting that the function should have not changed the server's state
+            assert_eq!(server.next_transport_id, 1);
+            assert_eq!(server.transports.len(), 0);
+        }
+
+        #[tokio::test]
+        async fn process_events_should_work() {
+            let mut server: RpcServer<(), MemoryTransport> = RpcServer::create(());
+
+            let (tx, mut rx) = unbounded_channel::<TransportNotification<MemoryTransport>>();
+
+            server.process_server_events(tx);
+
+            let (client_transport, server_transport) = MemoryTransport::create();
+
+            server
+                .server_events_sender
+                .send_attach_transport(Arc::new(server_transport))
+                .unwrap();
+
+            // Asserting that the process_event function sent the correct notification when a transport is attached
+            if let TransportNotification::MustAttachTransport(transport) = rx.recv().await.unwrap()
+            {
+                server.new_transport_attached(transport).await.unwrap();
+            } else {
+                panic!("Failed")
+            }
+
+            // Asserting that the process_event function sent the correct notification when a client sends a message
+            client_transport.send(vec![0]).await.unwrap();
+            let transport_notification_event = rx.recv().await.unwrap();
+            assert!(matches!(
+                transport_notification_event,
+                TransportNotification::NewMessage(_)
+            ));
+
+            // Drop client to close it
+            drop(client_transport);
+            // Asserting that the process_event function sent the correct notification when a client was closed
+            let transport_notification_event = rx.recv().await.unwrap();
+            assert!(matches!(
+                transport_notification_event,
+                TransportNotification::CloseTransport(_)
+            ));
+        }
+
+        #[tokio::test]
+        #[should_panic]
+        async fn process_events_should_fail() {
+            let mut server: RpcServer<(), MemoryTransport> = RpcServer::create(());
+
+            let (tx, _) = unbounded_channel::<TransportNotification<MemoryTransport>>();
+
+            server.process_server_events(tx.clone());
+            server.process_server_events(tx);
+        }
+
+        #[tokio::test]
+        async fn handle_create_port_should_work() {
+            let mut server = RpcServer::create(());
+
+            let (client_transport, server_transport) = MemoryTransport::create();
+
+            let create_port_req = CreatePort {
+                message_identifier: build_message_identifier(RpcMessageTypes::CreatePort as u32, 1),
+                port_name: "my-port".to_string(),
+            };
+
+            let caller_booking_keeping = Arc::new(AtomicBool::new(false));
+            let caller_booking_keeping_cloned = caller_booking_keeping.clone();
+            server.set_module_registrator_handler(move |_| {
+                caller_booking_keeping_cloned.store(true, std::sync::atomic::Ordering::SeqCst)
+            });
+
+            server
+                .handle_create_port(
+                    Arc::new(server_transport),
+                    1,
+                    1,
+                    create_port_req.encode_to_vec(),
+                )
+                .await
+                .unwrap();
+
+            // Assert that the RpcSever changed correctly its state
+            assert_eq!(server.next_port_id, 2);
+            assert_eq!(server.ports.len(), 1);
+            assert_eq!(server.ports_by_transport_id.len(), 1);
+            assert_eq!(server.ports_by_transport_id.get(&1).unwrap(), &vec![1]);
+            // Handler was called
+            assert!(caller_booking_keeping.load(std::sync::atomic::Ordering::SeqCst));
+
+            let port = server.ports.get(&1).unwrap();
+            assert_eq!(port.name, "my-port");
+
+            // Assert that the function put the correct stuff into the response
+            let response = client_transport.receive().await.unwrap();
+            let response = CreatePortResponse::decode(response.as_slice()).unwrap();
+            assert_eq!(response.port_id, 1);
+            assert_eq!(
+                response.message_identifier,
+                build_message_identifier(RpcMessageTypes::CreatePortResponse as u32, 1)
+            );
+        }
+
+        #[tokio::test]
+        async fn handle_create_port_should_fail() {
+            let mut server = RpcServer::create(());
+
+            let (client_transport, server_transport) = MemoryTransport::create();
+
+            let server_transport = Arc::new(server_transport);
+
+            let err = server
+                .handle_create_port(server_transport.clone(), 1, 1, vec![0])
+                .await
+                .unwrap_err();
+
+            // Assert that the RpcServer returns the correct error
+            assert!(matches!(
+                err,
+                ServerResultError::External(ServerError::ProtocolError)
+            ));
+
+            // Assert that the RpcSever haven't changed the state
+            assert_eq!(server.next_port_id, 1);
+            assert_eq!(server.ports.len(), 0);
+            assert_eq!(server.ports_by_transport_id.len(), 0);
+
+            drop(client_transport);
+
+            let create_port_req = CreatePort {
+                message_identifier: build_message_identifier(RpcMessageTypes::CreatePort as u32, 1),
+                port_name: "my-port".to_string(),
+            };
+
+            let err = server
+                .handle_create_port(server_transport, 1, 1, create_port_req.encode_to_vec())
+                .await
+                .unwrap_err();
+
+            // Assert that the RpcServer returns the correct error
+            assert!(matches!(
+                err,
+                ServerResultError::Internal(ServerInternalError::TransportError)
+            ));
+        }
+
+        #[tokio::test]
+        async fn handle_request_module_should_work() {
+            let mut server = RpcServer::create(());
+
+            let (client_transport, server_transport) = MemoryTransport::create();
+            // Preparing scenario for handle_request_mocdule
+            let mut port = RpcServerPort::new("my-port");
+            let mut module = ServiceModuleDefinition::new();
+            module.add_unary("fakeprocedure", |_, _| Box::pin(async move { Ok(vec![0]) }));
+            port.registered_modules = HashMap::from_iter([("SERVICE".to_string(), module)]);
+            server.ports.insert(1, port);
+
+            let req = RequestModule {
+                message_identifier: build_message_identifier(
+                    RpcMessageTypes::RequestModule as u32,
+                    1,
+                ),
+                port_id: 1,
+                module_name: "SERVICE".to_string(),
+            };
+
+            server
+                .handle_request_module(Arc::new(server_transport), 1, req.encode_to_vec())
+                .await
+                .unwrap();
+
+            // Asserting that the function put the correct stuff into the response
+            let response =
+                RequestModuleResponse::decode(client_transport.receive().await.unwrap().as_slice())
+                    .unwrap();
+            assert_eq!(response.port_id, 1);
+            assert_eq!(response.procedures.len(), 1);
+            assert_eq!(
+                response.message_identifier,
+                build_message_identifier(RpcMessageTypes::RequestModuleResponse as u32, 1)
+            );
+        }
+
+        #[tokio::test]
+        async fn handle_request_module_should_fail() {
+            let mut server = RpcServer::create(());
+
+            let (client_transport, server_transport) = MemoryTransport::create();
+            // Preparing scenario for handle_request_mocdule
+            let mut port = RpcServerPort::new("my-port");
+            let mut module = ServiceModuleDefinition::new();
+            module.add_unary("fakeprocedure", |_, _| Box::pin(async move { Ok(vec![0]) }));
+            port.registered_modules = HashMap::from_iter([("SERVICE".to_string(), module)]);
+            server.ports.insert(1, port);
+
+            let server_transport = Arc::new(server_transport);
+            let err = server
+                .handle_request_module(server_transport.clone(), 1, vec![0])
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                ServerResultError::External(ServerError::ProtocolError)
+            ));
+
+            let req = RequestModule {
+                message_identifier: build_message_identifier(
+                    RpcMessageTypes::RequestModule as u32,
+                    1,
+                ),
+                port_id: 2,
+                module_name: "SERVICE".to_string(),
+            };
+
+            let err = server
+                .handle_request_module(server_transport.clone(), 1, req.encode_to_vec())
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                ServerResultError::External(ServerError::PortNotFound(2))
+            ));
+
+            let req = RequestModule {
+                message_identifier: build_message_identifier(
+                    RpcMessageTypes::RequestModule as u32,
+                    1,
+                ),
+                port_id: 1,
+                module_name: "SERVICE2".to_string(),
+            };
+
+            let err = server
+                .handle_request_module(server_transport.clone(), 1, req.encode_to_vec())
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                ServerResultError::External(ServerError::LoadModuleError)
+            ));
+
+            let req = RequestModule {
+                message_identifier: build_message_identifier(
+                    RpcMessageTypes::RequestModule as u32,
+                    1,
+                ),
+                port_id: 1,
+                module_name: "SERVICE".to_string(),
+            };
+
+            drop(client_transport);
+            let err = server
+                .handle_request_module(server_transport, 1, req.encode_to_vec())
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                ServerResultError::Internal(ServerInternalError::TransportError)
+            ));
+        }
+
+        #[tokio::test]
+        async fn handle_request_should_work() {
+            let mut server = RpcServer::create(());
+
+            let (_client_transport, server_transport) = MemoryTransport::create();
+            // Preparing scenario for handle_request
+            let mut port = RpcServerPort::new("my-port");
+            let caller_book_keeping = Arc::new(Mutex::new(String::default()));
+            let caller_book_keeping_clone_1 = caller_book_keeping.clone();
+            let caller_book_keeping_clone_2 = caller_book_keeping.clone();
+            let caller_book_keeping_clone_3 = caller_book_keeping.clone();
+            let caller_book_keeping_clone_4 = caller_book_keeping.clone();
+            port.procedures = HashMap::from_iter([
+                (
+                    1,
+                    ProcedureDefinition::Unary(Arc::new(move |_, _| {
+                        let caller_book_keeping: Arc<Mutex<String>> =
+                            caller_book_keeping_clone_1.clone();
+                        *caller_book_keeping.lock().unwrap() = String::from("UNARY");
+                        Box::pin(async move { Ok(vec![1, 2, 3, 4]) })
+                    })),
+                ),
+                (
+                    2,
+                    ProcedureDefinition::ServerStreams(Arc::new(move |_, _| {
+                        let caller_book_keeping = caller_book_keeping_clone_2.clone();
+                        *caller_book_keeping.lock().unwrap() = String::from("SERVER_STREAMS");
+                        Box::pin(async move {
+                            let (gen, gen_yielder) = Generator::create();
+                            gen_yielder.r#yield(vec![0]).await.unwrap();
+                            gen_yielder.r#yield(vec![1]).await.unwrap();
+                            gen_yielder.r#yield(vec![2]).await.unwrap();
+
+                            Ok(gen)
+                        })
+                    })),
+                ),
+                (
+                    3,
+                    ProcedureDefinition::ClientStreams(Arc::new(move |_, _| {
+                        let caller_book_keeping = caller_book_keeping_clone_3.clone();
+                        *caller_book_keeping.lock().unwrap() = String::from("CLIENT_STREAMS");
+                        Box::pin(async move { Ok(vec![20]) })
+                    })),
+                ),
+                (
+                    4,
+                    ProcedureDefinition::BiStreams(Arc::new(move |_, _| {
+                        let caller_book_keeping = caller_book_keeping_clone_4.clone();
+                        *caller_book_keeping.lock().unwrap() = String::from("BI_STREAMS");
+                        Box::pin(async move { Ok(Generator::create().0) })
+                    })),
+                ),
+            ]);
+            server.ports.insert(1, port);
+
+            let req = Request {
+                message_identifier: build_message_identifier(RpcMessageTypes::Request as u32, 1),
+                port_id: 1,
+                procedure_id: 1,
+                client_stream: 0,
+                payload: vec![0],
+            };
+            let server_transport = Arc::new(server_transport);
+            server
+                .handle_request(server_transport.clone(), 1, req.encode_to_vec())
+                .await
+                .unwrap();
+            assert_eq!(*caller_book_keeping.lock().unwrap(), "UNARY");
+
+            let req = Request {
+                message_identifier: build_message_identifier(RpcMessageTypes::Request as u32, 1),
+                port_id: 1,
+                procedure_id: 2,
+                client_stream: 0,
+                payload: vec![0],
+            };
+
+            server
+                .handle_request(server_transport.clone(), 1, req.encode_to_vec())
+                .await
+                .unwrap();
+
+            assert_eq!(*caller_book_keeping.lock().unwrap(), "SERVER_STREAMS");
+
+            let req = Request {
+                message_identifier: build_message_identifier(RpcMessageTypes::Request as u32, 1),
+                port_id: 1,
+                procedure_id: 3,
+                client_stream: 1,
+                payload: vec![0],
+            };
+
+            server
+                .handle_request(server_transport.clone(), 1, req.encode_to_vec())
+                .await
+                .unwrap();
+
+            assert_eq!(*caller_book_keeping.lock().unwrap(), "CLIENT_STREAMS");
+
+            let req = Request {
+                message_identifier: build_message_identifier(RpcMessageTypes::Request as u32, 1),
+                port_id: 1,
+                procedure_id: 4,
+                client_stream: 1,
+                payload: vec![0],
+            };
+
+            server
+                .handle_request(server_transport.clone(), 1, req.encode_to_vec())
+                .await
+                .unwrap();
+
+            assert_eq!(*caller_book_keeping.lock().unwrap(), "BI_STREAMS");
+        }
+
+        #[tokio::test]
+        async fn handle_request_should_fail() {
+            let mut server: RpcServer<(), MemoryTransport> = RpcServer::create(());
+
+            let (client_transport, server_transport) = MemoryTransport::create();
+            let server_transport = Arc::new(server_transport);
+
+            let err = server
+                .handle_request(server_transport.clone(), 1, vec![1, 2, 3, 4, 5])
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                ServerResultError::External(ServerError::ProtocolError)
+            ));
+
+            let req = Request {
+                message_identifier: build_message_identifier(RpcMessageTypes::Request as u32, 1),
+                port_id: 1,
+                client_stream: 0,
+                procedure_id: 1,
+                payload: vec![],
+            };
+
+            let err = server
+                .handle_request(server_transport.clone(), 1, req.encode_to_vec())
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                ServerResultError::External(ServerError::PortNotFound(1))
+            ));
+
+            let mut port = RpcServerPort::new("my-port");
+            port.procedures = HashMap::from_iter([
+                (
+                    3,
+                    ProcedureDefinition::ClientStreams(Arc::new(|_, _| {
+                        Box::pin(async move { Ok(vec![20]) })
+                    })),
+                ),
+                (
+                    4,
+                    ProcedureDefinition::BiStreams(Arc::new(|_, _| {
+                        Box::pin(async move { Ok(Generator::create().0) })
+                    })),
+                ),
+            ]);
+            server.ports.insert(1, port);
+
+            drop(client_transport);
+
+            let req = Request {
+                message_identifier: build_message_identifier(RpcMessageTypes::Request as u32, 1),
+                port_id: 1,
+                client_stream: 1,
+                procedure_id: 3,
+                payload: vec![],
+            };
+
+            let err = server
+                .handle_request(server_transport.clone(), 1, req.encode_to_vec())
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                ServerResultError::Internal(ServerInternalError::TransportError)
+            ));
+
+            let req = Request {
+                message_identifier: build_message_identifier(RpcMessageTypes::Request as u32, 1),
+                port_id: 1,
+                client_stream: 1,
+                procedure_id: 4,
+                payload: vec![],
+            };
+
+            let err = server
+                .handle_request(server_transport.clone(), 1, req.encode_to_vec())
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                ServerResultError::Internal(ServerInternalError::TransportError)
+            ));
+        }
+    }
+
+    mod rpc_server_port {
+        use std::{collections::HashMap, sync::Arc};
+
+        use crate::{
+            server::{RpcServerPort, ServerError, ServerResultError},
+            service_module_definition::{ProcedureDefinition, ServiceModuleDefinition},
+        };
+
+        #[test]
+        fn register_module_should_work() {
+            let mut port: RpcServerPort<()> = RpcServerPort::new("my-port");
+            port.register_module("module_name", ServiceModuleDefinition::new());
+            assert_eq!(port.registered_modules.len(), 1)
+        }
+
+        #[test]
+        fn load_module_should_work() {
+            let mut port: RpcServerPort<()> = RpcServerPort::new("my-port");
+            let mut module = ServiceModuleDefinition::new();
+            module.add_unary("fakeprocedure", |_, _| Box::pin(async move { Ok(vec![0]) }));
+            port.registered_modules = HashMap::from_iter([("SERVICE".to_string(), module)]);
+
+            let declaration = port.load_module("SERVICE").unwrap();
+            assert_eq!(declaration.procedures.len(), 1);
+            assert_eq!(declaration.procedures[0].procedure_id, 1);
+            assert_eq!(declaration.procedures[0].procedure_name, "fakeprocedure");
+
+            assert_eq!(port.next_procedure_id, 2);
+            assert_eq!(port.loaded_modules.len(), 1);
+            assert!(port.loaded_modules.get("SERVICE").is_some());
+            assert_eq!(port.procedures.len(), 1);
+            assert!(matches!(
+                port.procedures.get(&1).unwrap(),
+                ProcedureDefinition::Unary(_)
+            ));
+        }
+
+        #[test]
+        fn load_module_should_fail() {
+            let mut port: RpcServerPort<()> = RpcServerPort::new("my-port");
+            let mut module = ServiceModuleDefinition::new();
+            module.add_unary("fakeprocedure", |_, _| Box::pin(async move { Ok(vec![0]) }));
+            port.registered_modules = HashMap::from_iter([("SERVICE".to_string(), module)]);
+
+            let err = port.load_module("SERVICE2").unwrap_err();
+            assert!(matches!(
+                err,
+                ServerResultError::External(ServerError::ModuleNotFound(_))
+            ));
+
+            let err = port.load_module("SERVICE2").unwrap_err();
+            assert!(matches!(
+                err,
+                ServerResultError::External(ServerError::ModuleNotFound(_))
+            ));
+        }
+
+        #[test]
+        fn get_procedure_should_work() {
+            let mut port: RpcServerPort<()> = RpcServerPort::new("my-port");
+            port.procedures.insert(
+                1,
+                ProcedureDefinition::Unary(Arc::new(|_, _| Box::pin(async move { Ok(vec![0]) }))),
+            );
+
+            assert!(matches!(
+                port.get_procedure(1).unwrap(),
+                ProcedureDefinition::Unary(_)
+            ))
+        }
+
+        #[test]
+        fn get_procedure_should_fail() {
+            let mut port: RpcServerPort<()> = RpcServerPort::new("my-port");
+            port.procedures.insert(
+                1,
+                ProcedureDefinition::Unary(Arc::new(|_, _| Box::pin(async move { Ok(vec![0]) }))),
+            );
+
+            assert!(port.get_procedure(2).is_err());
+        }
+    }
 }
