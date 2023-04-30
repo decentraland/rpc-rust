@@ -6,8 +6,7 @@ use crate::{
     rpc_protocol::{
         fill_remote_error,
         parse::{
-            build_message_identifier, parse_header, parse_message_identifier,
-            parse_protocol_message, ParseErrors,
+            build_message_identifier, parse_message_identifier, parse_protocol_message, ParseErrors,
         },
         RemoteError, Response, RpcMessageTypes, StreamMessage,
     },
@@ -20,19 +19,13 @@ use crate::{
     CommonError,
 };
 use async_channel::Sender as AsyncChannelSender;
-use log::{debug, error, info};
+use log::{debug, error};
 use prost::Message;
 use std::{collections::HashMap, sync::Arc};
-use tokio::{
-    select,
-    sync::{
-        oneshot::{
-            channel as oneshot_channel, Receiver as OneShotReceiver, Sender as OneShotSender,
-        },
-        Mutex,
-    },
+use tokio::sync::{
+    oneshot::{channel as oneshot_channel, Receiver as OneShotReceiver, Sender as OneShotSender},
+    Mutex,
 };
-use tokio_util::sync::CancellationToken;
 
 /// It's in charge of handling every request that the client sends
 ///
@@ -412,7 +405,7 @@ pub struct ClientMessagesHandler<T: Transport + ?Sized> {
     ///
     /// If the cancellation token is never triggered, the background task cotinues until the `RpcClient` owning this is dropped
     ///
-    process_cancellation_token: CancellationToken,
+    process_cancellation_token: tokio_util::sync::CancellationToken,
 }
 
 #[cfg(feature = "client")]
@@ -421,7 +414,7 @@ impl<T: Transport + ?Sized + 'static> ClientMessagesHandler<T> {
         Self {
             transport,
             one_time_listeners: Mutex::new(HashMap::new()),
-            process_cancellation_token: CancellationToken::new(),
+            process_cancellation_token: tokio_util::sync::CancellationToken::new(),
             listeners: Mutex::new(HashMap::new()),
             streams_handler: Arc::new(StreamsHandler::new()),
         }
@@ -432,6 +425,7 @@ impl<T: Transport + ?Sized + 'static> ClientMessagesHandler<T> {
     /// The receiver is an [`Arc<Self>`] in order to be able to process in a backgroun taks and mutate the state of the listeners
     ///
     pub fn start(self: Arc<Self>) {
+        use tokio::select;
         let token = self.process_cancellation_token.clone();
         tokio::spawn(async move {
             select! {
@@ -453,6 +447,7 @@ impl<T: Transport + ?Sized + 'static> ClientMessagesHandler<T> {
 
     /// In charge of looping in the transport wating for new responses and sending the response through a listener
     async fn process(&self) {
+        use crate::rpc_protocol::parse::parse_header;
         loop {
             match self.transport.receive().await {
                 Ok(data) => {
@@ -510,7 +505,7 @@ impl<T: Transport + ?Sized + 'static> ClientMessagesHandler<T> {
                 Err(error) => {
                     error!("> ClientMessagesHandler > process > Error on receive {error:?}");
                     if matches!(error, TransportError::Closed) {
-                        info!("> ClientMessagesHandler > process > closing...");
+                        log::info!("> ClientMessagesHandler > process > closing...");
                         break;
                     }
                 }
