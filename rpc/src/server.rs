@@ -661,7 +661,6 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
         payload: Vec<u8>,
     ) -> ServerResult<()> {
         let port_id = self.next_port_id;
-        self.next_port_id += 1;
         let create_port = CreatePort::decode(payload.as_slice())
             .map_err(|_| ServerResultError::External(ServerError::ProtocolError))?;
         let port_name = create_port.port_name;
@@ -671,12 +670,6 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
             handler(&mut port);
         }
 
-        self.ports.insert(port_id, port);
-        self.ports_by_transport_id
-            .entry(transport_id)
-            .and_modify(|ports| ports.push(port_id))
-            .or_insert_with(|| vec![port_id]);
-
         let response = CreatePortResponse {
             message_identifier: build_message_identifier(
                 RpcMessageTypes::CreatePortResponse as u32,
@@ -685,10 +678,18 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
             port_id,
         };
         let response = response.encode_to_vec();
+
         transport
             .send(response)
             .await
             .map_err(|_| ServerResultError::Internal(ServerInternalError::TransportError))?;
+
+        self.next_port_id += 1;
+        self.ports.insert(port_id, port);
+        self.ports_by_transport_id
+            .entry(transport_id)
+            .and_modify(|ports| ports.push(port_id))
+            .or_insert_with(|| vec![port_id]);
 
         Ok(())
     }
