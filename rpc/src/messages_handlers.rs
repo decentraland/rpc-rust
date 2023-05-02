@@ -141,8 +141,8 @@ impl ServerMessagesHandler {
                                 .await
                         }
                     },
-                    Err(_) => {
-                        error!("> ServerMessagesHandler > process_server_streams_request > Error on receiving on a open_ack_listener, sender seems to be dropped");
+                    Err(e) => {
+                        error!("> ServerMessagesHandler > process_server_streams_request > Error on receiving on a open_ack_listener, sender seems to be dropped: {e:?}");
                     }
                 },
                 Err(error) => {
@@ -641,7 +641,7 @@ impl StreamsHandler {
     ///
     /// It handles the sequence id for each [`StreamMessage`], it'll await for the acknowlegde of each message in the other half to conitnue with the messages sending.
     ///
-    /// Also, it stops the generator and break the loop if the other half closed the stream. Otherwise, it will close the strram when the `stream_generator` doesn't have more messages.
+    /// Also, it stops the generator and break the loop if the other half closed the stream. Otherwise, it will close the stream when the `stream_generator` doesn't have more messages.
     ///
     pub async fn send_streams_through_transport<T: Transport + ?Sized>(
         &self,
@@ -677,8 +677,8 @@ impl StreamsHandler {
                                 return Err(CommonError::ProtocolError);
                             }
                         },
-                        Err(_) => {
-                            error!("> StreamsHandler > send_streams_through_transport > Error while waiting for an ACK Message, the sender half seems to be dropped.");
+                        Err(e) => {
+                            error!("> StreamsHandler > send_streams_through_transport > Error while waiting for an ACK Message, the sender half seems to be dropped: {e:?}");
                             return Err(CommonError::UnexpectedError(
                                 "The sender half of a listener seems to be droppped".to_string(),
                             ));
@@ -722,7 +722,15 @@ impl StreamsHandler {
         let (tx, rx) = oneshot_channel();
         {
             let mut lock = self.ack_listeners.lock().await;
-            lock.insert(format!("{}{}", message_number, message.sequence_id), tx);
+            if let Some(_) = lock.insert(
+                format!(
+                    "{}-{}-{}",
+                    message.port_id, message_number, message.sequence_id
+                ),
+                tx,
+            ) {
+                error!("> StreamsHandler > send_stram > Overriding TX for message_number: {message_number} and sequence_id: {}", message.sequence_id);
+            }
         }
 
         if let Err(error) = transport.send(message.encode_to_vec()).await {
@@ -730,7 +738,10 @@ impl StreamsHandler {
             {
                 // Remove the inserted tx in order to drop the channel because it won't be used
                 let mut lock = self.ack_listeners.lock().await;
-                lock.remove(&format!("{}{}", message_number, message.sequence_id));
+                lock.remove(&format!(
+                    "{}-{}-{}",
+                    message.port_id, message_number, message.sequence_id
+                ));
             }
             if !matches!(error, TransportError::Closed) {
                 return Err(CommonError::TransportError);
@@ -750,7 +761,10 @@ impl StreamsHandler {
                     let listener = {
                         let mut lock = self.ack_listeners.lock().await;
                         // we should remove ack listener it just for a seq_id
-                        lock.remove(&format!("{}{}", message_number, stream_message.sequence_id))
+                        lock.remove(&format!(
+                            "{}-{}-{}",
+                            stream_message.port_id, message_number, stream_message.sequence_id
+                        ))
                     };
                     match listener {
                         Some(sender) => {
