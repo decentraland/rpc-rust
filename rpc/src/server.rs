@@ -661,7 +661,6 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
         payload: Vec<u8>,
     ) -> ServerResult<()> {
         let port_id = self.next_port_id;
-        self.next_port_id += 1;
         let create_port = CreatePort::decode(payload.as_slice())
             .map_err(|_| ServerResultError::External(ServerError::ProtocolError))?;
         let port_name = create_port.port_name;
@@ -671,12 +670,6 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
             handler(&mut port);
         }
 
-        self.ports.insert(port_id, port);
-        self.ports_by_transport_id
-            .entry(transport_id)
-            .and_modify(|ports| ports.push(port_id))
-            .or_insert_with(|| vec![port_id]);
-
         let response = CreatePortResponse {
             message_identifier: build_message_identifier(
                 RpcMessageTypes::CreatePortResponse as u32,
@@ -685,10 +678,18 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
             port_id,
         };
         let response = response.encode_to_vec();
+
         transport
             .send(response)
             .await
             .map_err(|_| ServerResultError::Internal(ServerInternalError::TransportError))?;
+
+        self.next_port_id += 1;
+        self.ports.insert(port_id, port);
+        self.ports_by_transport_id
+            .entry(transport_id)
+            .and_modify(|ports| ports.push(port_id))
+            .or_insert_with(|| vec![port_id]);
 
         Ok(())
     }
@@ -785,6 +786,8 @@ pub struct RpcServerPort<Context> {
     loaded_modules: HashMap<String, ServerModuleDeclaration>,
     /// Procedures contains the id and the handler for each procedure
     procedures: HashMap<u32, ProcedureDefinition<Context>>,
+    /// Global Procedure ID
+    next_procedure_id: u32,
 }
 
 impl<Context> RpcServerPort<Context> {
@@ -794,6 +797,7 @@ impl<Context> RpcServerPort<Context> {
             registered_modules: HashMap::new(),
             loaded_modules: HashMap::new(),
             procedures: HashMap::new(),
+            next_procedure_id: 1,
         }
     }
 
@@ -827,10 +831,9 @@ impl<Context> RpcServerPort<Context> {
                     };
 
                     let definitions = module_generator.get_definitions();
-                    let mut procedure_id = 1;
 
                     for (procedure_name, procedure_definition) in definitions {
-                        let current_id = procedure_id;
+                        let current_id = self.next_procedure_id;
                         self.procedures
                             .insert(current_id, procedure_definition.clone());
                         server_module_declaration
@@ -839,7 +842,7 @@ impl<Context> RpcServerPort<Context> {
                                 procedure_name: procedure_name.clone(),
                                 procedure_id: current_id,
                             });
-                        procedure_id += 1
+                        self.next_procedure_id += 1;
                     }
 
                     self.loaded_modules
