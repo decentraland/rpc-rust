@@ -722,13 +722,16 @@ impl StreamsHandler {
         let (tx, rx) = oneshot_channel();
         {
             let mut lock = self.ack_listeners.lock().await;
-            if let Some(_) = lock.insert(
-                format!(
-                    "{}-{}-{}",
-                    message.port_id, message_number, message.sequence_id
-                ),
-                tx,
-            ) {
+            if lock
+                .insert(
+                    format!(
+                        "{}-{}-{}",
+                        message.port_id, message_number, message.sequence_id
+                    ),
+                    tx,
+                )
+                .is_some()
+            {
                 error!("> StreamsHandler > send_stram > Overriding TX for message_number: {message_number} and sequence_id: {}", message.sequence_id);
             }
         }
