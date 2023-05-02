@@ -2,8 +2,11 @@ use crate::{
     Book, BookServiceServer, ClientStreamRequest, GetBookRequest, MyExampleContext,
     QueryBooksRequest, ServerStreamResponse,
 };
-use dcl_rpc::{rpc_protocol::RemoteErrorResponse, stream_protocol::Generator};
-use std::{sync::Arc, time::Duration};
+use dcl_rpc::{
+    rpc_protocol::RemoteErrorResponse, service_module_definition::ProcedureContext,
+    stream_protocol::Generator,
+};
+use std::time::Duration;
 use tokio::time::sleep;
 
 pub struct BookService {}
@@ -13,9 +16,9 @@ impl BookServiceServer<MyExampleContext, BookServiceError> for BookService {
     async fn get_book(
         &self,
         request: GetBookRequest,
-        ctx: Arc<MyExampleContext>,
+        ctx: ProcedureContext<MyExampleContext>,
     ) -> Result<Book, BookServiceError> {
-        assert_eq!(ctx.hardcoded_database.len(), 5);
+        assert_eq!(ctx.server_context.hardcoded_database.len(), 5);
 
         // Simulate DB operation
         println!(
@@ -25,6 +28,7 @@ impl BookServiceServer<MyExampleContext, BookServiceError> for BookService {
         sleep(Duration::from_secs(2)).await;
 
         match ctx
+            .server_context
             .hardcoded_database
             .iter()
             .find(|book_record| book_record.isbn == request.isbn)
@@ -43,13 +47,13 @@ impl BookServiceServer<MyExampleContext, BookServiceError> for BookService {
     async fn query_books(
         &self,
         request: QueryBooksRequest,
-        ctx: Arc<MyExampleContext>,
+        ctx: ProcedureContext<MyExampleContext>,
     ) -> Result<ServerStreamResponse<Book>, BookServiceError> {
         println!("> BookService > server stream > QueryBooks");
         let (generator, generator_yielder) = Generator::create();
         // Spawn for a quick response
         tokio::spawn(async move {
-            for book in &ctx.hardcoded_database {
+            for book in &ctx.server_context.hardcoded_database {
                 sleep(Duration::from_secs(1)).await;
                 if book.author.contains(&request.author_prefix) {
                     generator_yielder.r#yield(book.clone()).await.unwrap();
@@ -63,17 +67,17 @@ impl BookServiceServer<MyExampleContext, BookServiceError> for BookService {
     async fn get_book_stream(
         &self,
         mut request: ClientStreamRequest<GetBookRequest>,
-        ctx: Arc<MyExampleContext>,
+        ctx: ProcedureContext<MyExampleContext>,
     ) -> Result<Book, BookServiceError> {
         while request.next().await.is_some() {}
 
-        Ok(ctx.hardcoded_database[0].clone())
+        Ok(ctx.server_context.hardcoded_database[0].clone())
     }
 
     async fn query_books_stream(
         &self,
         mut request: ClientStreamRequest<GetBookRequest>,
-        ctx: Arc<MyExampleContext>,
+        ctx: ProcedureContext<MyExampleContext>,
     ) -> Result<ServerStreamResponse<Book>, BookServiceError> {
         println!("> BookService > bidir stream > QueryBooksStream");
         let (generator, generator_yielder) = Generator::create();
@@ -81,6 +85,7 @@ impl BookServiceServer<MyExampleContext, BookServiceError> for BookService {
         tokio::spawn(async move {
             while let Some(message) = request.next().await {
                 let book = ctx
+                    .server_context
                     .hardcoded_database
                     .iter()
                     .find(|book| book.isbn == message.isbn);

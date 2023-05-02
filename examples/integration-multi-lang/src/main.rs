@@ -82,7 +82,7 @@ async fn run_ws_example() {
     });
 
     // PARTICULAR CASE IN ORDER TO EXIT THE PROCESS WHEN THE EXAMPLE CLIENT CLOSES THE CONNECTION
-    server.set_on_transport_closes_handler(|_| {
+    server.set_on_transport_closes_handler(|_, _| {
         println!("> Exit process..");
         std::process::exit(0);
     });

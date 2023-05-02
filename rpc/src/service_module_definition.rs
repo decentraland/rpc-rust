@@ -7,6 +7,14 @@ use crate::{rpc_protocol::RemoteError, stream_protocol::Generator};
 use core::future::Future;
 use std::{collections::HashMap, pin::Pin, sync::Arc};
 
+/// The context type received by every procedure
+pub struct ProcedureContext<Context> {
+    /// The context given to the [`RpcServer`](`crate::server::RpcServer`)
+    pub server_context: Arc<Context>,
+    /// The ID given to the Transport which is calling the procedure
+    pub transport_id: u32,
+}
+
 /// General type returned by every procedure
 pub type Response<T> = Pin<Box<dyn Future<Output = Result<T, RemoteError>> + Send>>;
 
@@ -18,14 +26,14 @@ pub type UnaryResponse = Response<Vec<u8>>;
 
 /// Handler type for a unary procedure.
 pub type UnaryRequestHandler<Context> =
-    dyn Fn(CommonPayload, Arc<Context>) -> UnaryResponse + Send + Sync;
+    dyn Fn(CommonPayload, ProcedureContext<Context>) -> UnaryResponse + Send + Sync;
 
 /// Response type returned by a server streams procedure
 pub type ServerStreamsResponse = Response<Generator<Vec<u8>>>;
 
 /// Handler type for a server streams procedure
 pub type ServerStreamsRequestHandler<Context> =
-    dyn Fn(CommonPayload, Arc<Context>) -> ServerStreamsResponse + Send + Sync;
+    dyn Fn(CommonPayload, ProcedureContext<Context>) -> ServerStreamsResponse + Send + Sync;
 
 /// Payload type that a client streams procedure receives
 pub type ClientStreamsPayload = Generator<Vec<u8>>;
@@ -35,7 +43,7 @@ pub type ClientStreamsResponse = Response<Vec<u8>>;
 
 /// Handler type for a client streams procedure
 pub type ClientStreamsRequestHandler<Context> =
-    dyn Fn(ClientStreamsPayload, Arc<Context>) -> ClientStreamsResponse + Send + Sync;
+    dyn Fn(ClientStreamsPayload, ProcedureContext<Context>) -> ClientStreamsResponse + Send + Sync;
 
 /// Payload type that a bidirection streams procedure rceives
 pub type BiStreamsPayload = Generator<Vec<u8>>;
@@ -45,7 +53,7 @@ pub type BiStreamsResponse = Response<Generator<Vec<u8>>>;
 
 /// Handler type for a bidirectional streams procedure
 pub type BiStreamsRequestHandler<Context> =
-    dyn Fn(BiStreamsPayload, Arc<Context>) -> BiStreamsResponse + Send + Sync;
+    dyn Fn(BiStreamsPayload, ProcedureContext<Context>) -> BiStreamsResponse + Send + Sync;
 
 /// Type used for storing procedure definitions given by the codegeneration for the RPC service
 pub enum ProcedureDefinition<Context> {
@@ -88,7 +96,7 @@ impl<Context> ServiceModuleDefinition<Context> {
 
     /// Add an unary procedure handler to the service definition
     pub fn add_unary<
-        H: Fn(CommonPayload, Arc<Context>) -> UnaryResponse + Send + Sync + 'static,
+        H: Fn(CommonPayload, ProcedureContext<Context>) -> UnaryResponse + Send + Sync + 'static,
     >(
         &mut self,
         name: &str,
@@ -99,7 +107,10 @@ impl<Context> ServiceModuleDefinition<Context> {
 
     /// Add a server streams procedure handler to the service definition
     pub fn add_server_streams<
-        H: Fn(CommonPayload, Arc<Context>) -> ServerStreamsResponse + Send + Sync + 'static,
+        H: Fn(CommonPayload, ProcedureContext<Context>) -> ServerStreamsResponse
+            + Send
+            + Sync
+            + 'static,
     >(
         &mut self,
         name: &str,
@@ -110,7 +121,10 @@ impl<Context> ServiceModuleDefinition<Context> {
 
     /// Add a client streams procedure handler to the service definition
     pub fn add_client_streams<
-        H: Fn(ClientStreamsPayload, Arc<Context>) -> ClientStreamsResponse + Send + Sync + 'static,
+        H: Fn(ClientStreamsPayload, ProcedureContext<Context>) -> ClientStreamsResponse
+            + Send
+            + Sync
+            + 'static,
     >(
         &mut self,
         name: &str,
@@ -121,7 +135,10 @@ impl<Context> ServiceModuleDefinition<Context> {
 
     /// Add a bidirectional streams procedure handler to the service definition
     pub fn add_bidir_streams<
-        H: Fn(BiStreamsPayload, Arc<Context>) -> BiStreamsResponse + Send + Sync + 'static,
+        H: Fn(BiStreamsPayload, ProcedureContext<Context>) -> BiStreamsResponse
+            + Send
+            + Sync
+            + 'static,
     >(
         &mut self,
         name: &str,
