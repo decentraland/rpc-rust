@@ -27,7 +27,7 @@ type TransportHandler<Transport> = dyn Fn(Arc<Transport>, TransportID) + Send + 
 type OnTransportClosesHandler<Transport> = TransportHandler<Transport>;
 
 /// Handler that run each time that a transport is put to run
-type OnTransportConnected = dyn Fn(TransportID) + Send + Sync + 'static;
+type OnTransportConnected<Transport> = TransportHandler<Transport>;
 
 /// Error returned by a server function could be an error which it's possible and useful to communicate or not.
 #[derive(Debug)]
@@ -183,7 +183,7 @@ pub struct RpcServer<Context, T: Transport + ?Sized> {
     /// The handler is executed when a transport is put to run.
     ///
     /// It works for executing a function which receives the Transport ID assigned by the server to a new running transport
-    on_transport_connected_handler: Option<Box<OnTransportConnected>>,
+    on_transport_connected_handler: Option<Box<OnTransportConnected<T>>>,
     /// Ports registered in the [`RpcServer`]
     ports: HashMap<PortID, RpcServerPort<Context>>,
     ports_by_transport_id: HashMap<TransportID, Vec<PortID>>,
@@ -262,7 +262,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
         self.server_events_sender
             .send_new_transport(current_id, transport.clone())?;
         if let Some(handler) = &self.on_transport_connected_handler {
-            handler(current_id);
+            handler(transport.clone(), current_id);
         }
         self.transports.insert(current_id, transport);
         self.next_transport_id += 1;
@@ -462,7 +462,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
     /// It works for executing a function which receives the Transport ID assigned by the server to a new running transport
     pub fn set_on_transport_connected_handler<H>(&mut self, handler: H)
     where
-        H: Fn(TransportID) + Send + Sync + 'static,
+        H: Fn(Arc<T>, TransportID) + Send + Sync + 'static,
     {
         self.on_transport_connected_handler = Some(Box::new(handler));
     }
