@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use dcl_rpc::{
     server::{RpcServer, RpcServerPort},
-    transports::web_socket::{WebSocketServer, WebSocketTransport},
+    transports::web_socket::{WebSocket, WebSocketServer, WebSocketTransport},
 };
 use integration_multi_lang::{
     service::book_service, Book, BookServiceRegistration, MyExampleContext,
@@ -67,7 +67,8 @@ async fn run_ws_example() {
     let server_events_sender = server.get_server_events_sender();
     tokio::spawn(async move {
         while let Some(Ok(connection)) = connection_listener.recv().await {
-            let transport = WebSocketTransport::new(connection);
+            let websocket = Arc::new(WebSocket::new(connection));
+            let transport = WebSocketTransport::new(websocket);
             let transport_to_arc = Arc::new(transport);
             match server_events_sender.send_attach_transport(transport_to_arc) {
                 Ok(_) => {

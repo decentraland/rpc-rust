@@ -4,7 +4,7 @@ use dcl_rpc::{
     stream_protocol::Generator,
     transports::{
         memory::MemoryTransport,
-        web_socket::{WebSocketClient, WebSocketServer, WebSocketTransport},
+        web_socket::{WebSocket, WebSocketClient, WebSocketServer, WebSocketTransport},
         Transport,
     },
 };
@@ -208,7 +208,8 @@ async fn run_ws_transport() {
         let server_events_sender = server.get_server_events_sender();
         tokio::spawn(async move {
             while let Some(Ok(connection)) = connection_listener.recv().await {
-                let transport = WebSocketTransport::new(connection);
+                let websocket = Arc::new(WebSocket::new(connection));
+                let transport = WebSocketTransport::new(websocket);
                 let transport_to_arc = Arc::new(transport);
                 match server_events_sender.send_attach_transport(transport_to_arc) {
                     Ok(_) => {
@@ -295,7 +296,8 @@ async fn run_with_dyn_transport() {
         let server_events_sender = server.get_server_events_sender();
         tokio::spawn(async move {
             while let Some(Ok(connection)) = connection_listener.recv().await {
-                let transport = WebSocketTransport::new(connection);
+                let websocket = Arc::new(WebSocket::new(connection));
+                let transport = WebSocketTransport::new(websocket);
                 let transport_to_arc: Arc<dyn Transport> = Arc::new(transport);
                 match server_events_sender.send_attach_transport(transport_to_arc) {
                     Ok(_) => {
