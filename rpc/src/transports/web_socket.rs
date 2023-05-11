@@ -153,18 +153,29 @@ impl WebSocket {
         }
     }
 
-    async fn send(&self, message: Message) -> Result<(), TungsteniteError> {
+    pub async fn send(&self, message: Message) -> Result<(), TungsteniteError> {
         self.write.lock().await.send(message).await
     }
 
-    async fn receive(&self) -> Option<Result<Message, TungsteniteError>> {
+    pub async fn receive(&self) -> Option<Result<Message, TungsteniteError>> {
         self.read.lock().await.next().await
     }
 
-    async fn close(&self) -> Result<(), TungsteniteError> {
+    pub async fn close(&self) -> Result<(), TungsteniteError> {
         self.write.lock().await.close().await
     }
+
+    pub async fn ping_every(self: Arc<Self>, ping_interval: Duration) {
+        tokio::spawn(async move {
+            let mut ping_interval = interval(ping_interval);
+            loop {
+                ping_interval.tick().await;
+                _ = self.send(Message::Ping(vec![])).await;
+            }
+        });
+    }
 }
+
 /// WebScoketClient structure to connect to a WebSocket Server
 pub struct WebSocketClient;
 
@@ -178,15 +189,6 @@ impl WebSocketClient {
         debug!("Connected to {}", host);
 
         let websocket = Arc::new(WebSocket::new(websocket_stream));
-        let websocket_ping = websocket.clone();
-        tokio::spawn(async move {
-            let mut ping_interval = interval(Duration::from_secs(30));
-            loop {
-                ping_interval.tick().await;
-                _ = websocket_ping.send(Message::Ping(vec![])).await;
-            }
-        });
-
         Ok(websocket)
     }
 }
