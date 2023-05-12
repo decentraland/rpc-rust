@@ -8,7 +8,7 @@ pub mod error;
 #[cfg(feature = "memory")]
 pub mod memory;
 #[cfg(feature = "websockets")]
-pub mod web_socket;
+pub mod web_sockets;
 
 pub type TransportMessage = Vec<u8>;
 
@@ -28,6 +28,6 @@ pub enum TransportError {
 #[async_trait]
 pub trait Transport: Send + Sync {
     async fn receive(&self) -> Result<TransportMessage, TransportError>;
-    async fn send(&self, message: Vec<u8>) -> Result<(), TransportError>;
+    async fn send(&self, message: TransportMessage) -> Result<(), TransportError>;
     async fn close(&self);
 }
