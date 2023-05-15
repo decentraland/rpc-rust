@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-dcl-rpc = { path = "../../rpc", features = ["client"] }
+dcl-rpc = { path = "../../rpc", features = ["client", "tungstenite"] }
 futures-channel= { workspace = true }
 tokio= { workspace = true }
 futures-util= { workspace = true }
