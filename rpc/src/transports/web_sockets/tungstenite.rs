@@ -20,8 +20,6 @@ use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream,
 };
 
-use crate::transports::TransportError;
-
 use super::{convert, Error, Message, WebSocket};
 
 /// Write Stream Half of [`WebSocketStream`]
@@ -208,7 +206,7 @@ impl Drop for WebSocketServer {
 pub struct WebSocketClient;
 
 impl WebSocketClient {
-    pub async fn connect(host: &str) -> Result<Arc<TungsteniteWebSocket>, TransportError> {
+    pub async fn connect(host: &str) -> Result<Arc<TungsteniteWebSocket>, Error> {
         let (websocket_stream, _) = connect_async(host).await?;
         debug!("Connected to {}", host);
 
