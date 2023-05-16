@@ -398,7 +398,7 @@ impl RPCServiceGenerator {
             request = quote! { request };
         } else {
             service_stream = quote! {
-                service.#method_name(context).await;
+                service.#method_name(context).await
             };
             request = quote! { _request };
         };
