@@ -1,6 +1,6 @@
 [package]
 name = "dcl-rpc"
-version = "2.3.3"
+version = "2.3.4"
 edition = "2021"
 description = "Decentraland RPC Implementation"
 repository = "https://github.com/decentraland/rpc-rust"
