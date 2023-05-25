@@ -1,4 +1,6 @@
+use super::{convert, Error, Message, WebSocket};
 use async_trait::async_trait;
+use dcl_crypto_middleware_rs::ws::AuthenticatedWebSocket;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::Mutex;
@@ -6,10 +8,6 @@ use tokio_tungstenite::tungstenite::Error as TungsteniteError;
 use warp::ws::Message as WarpMessage;
 use warp::ws::WebSocket as WarpWS;
 use warp::Error as WarpError;
-
-use super::Message;
-use super::WebSocket;
-use super::{convert, Error};
 
 type ReadStream = SplitStream<WarpWS>;
 type WriteStream = SplitSink<WarpWS, WarpMessage>;
@@ -84,5 +82,28 @@ impl WarpWebSocket {
         let (write, read) = ws.split();
         let (write, read) = (Mutex::new(write), Mutex::new(read));
         Self { write, read }
+    }
+}
+
+#[async_trait]
+impl AuthenticatedWebSocket for WarpWebSocket
+where
+    Self: WebSocket,
+{
+    type Error = ();
+    /// Sends the signature challenge to the client
+    async fn send_signature_challenge(&self, challenge: &str) -> Result<(), Self::Error> {
+        self.send(Message::Text(challenge.to_string()))
+            .await
+            .map_err(|_| ())
+    }
+
+    /// Receives the authchain with signed challenge
+    async fn receive_signed_challenge(&mut self) -> Result<String, Self::Error> {
+        match self.receive().await {
+            Some(Ok(Message::Text(text_reply))) => Ok(text_reply),
+            Some(_) => Err(()),
+            None => Err(()),
+        }
     }
 }
