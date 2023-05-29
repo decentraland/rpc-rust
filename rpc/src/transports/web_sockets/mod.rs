@@ -128,7 +128,7 @@ impl<W: WebSocket, C: Send + Sync + 'static> Transport for WebSocketTransport<W,
     }
 }
 
-pub fn convert<M, E>(value: Result<M, E>) -> Result<Message, Error>
+pub(crate) fn convert<M, E>(value: Result<M, E>) -> Result<Message, Error>
 where
     M: Into<Message>,
     E: Into<Error>,
