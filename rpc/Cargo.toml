@@ -22,7 +22,7 @@ futures-util = {version = "0.3", default-features = false, features = ["sink", "
 tokio = {version = "1.0.0", default-features = false, features = ["io-util", "io-std", "macros", "net", "rt-multi-thread", "time", "sync"]}
 tokio-util = "0.7.4"
 
-tokio-tungstenite = { version = "0.18.0", features = ["native-tls"], optional = true }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"], optional = true }
 proc-macro2 = { version = "1.0", optional = true }
 quote = { version = "1.0", optional = true }
 prost-build = { version = "0.11.5", optional = true }
