@@ -2,6 +2,12 @@
 //!
 //! Also, it contains the type [`StreamsHandler`] to handle streams. This type is used by both because they both receive and return StreamMessages
 //!
+#[cfg(feature = "server")]
+use crate::server::{ServerError, ServerInternalError, ServerResult, ServerResultError};
+#[cfg(feature = "server")]
+use crate::service_module_definition::{
+    BiStreamsResponse, ClientStreamsResponse, ServerStreamsResponse, UnaryResponse,
+};
 use crate::{
     rpc_protocol::{
         fill_remote_error,
@@ -10,10 +16,6 @@ use crate::{
             parse_protocol_message, ParseErrors,
         },
         RemoteError, Response, RpcMessageTypes, StreamMessage,
-    },
-    server::{ServerError, ServerInternalError, ServerResult, ServerResultError},
-    service_module_definition::{
-        BiStreamsResponse, ClientStreamsResponse, ServerStreamsResponse, UnaryResponse,
     },
     stream_protocol::Generator,
     transports::{Transport, TransportError},
