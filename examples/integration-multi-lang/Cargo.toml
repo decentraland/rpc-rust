@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 dcl-rpc = { path = "../../rpc"}
 futures-channel= { workspace = true }
-tokio= { workspace = true }
+tokio= { workspace = true, features = ["rt-multi-thread"] }
 futures-util= { workspace = true }
 async-trait= { workspace = true }
 async-channel= { workspace = true }

@@ -1,8 +1,7 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use log::debug;
-use tokio::time::interval;
 
 use super::{Transport, TransportError, TransportMessage};
 
@@ -36,9 +35,10 @@ pub trait WebSocket: Send + Sync + 'static {
 
     async fn close(&self) -> Result<(), Error>;
 
-    async fn ping_every(self: Arc<Self>, ping_interval: Duration) {
+    #[cfg(feature = "tokio-time")]
+    async fn ping_every(self: Arc<Self>, ping_interval: std::time::Duration) {
         tokio::spawn(async move {
-            let mut ping_interval = interval(ping_interval);
+            let mut ping_interval = tokio::time::interval(ping_interval);
             loop {
                 ping_interval.tick().await;
                 _ = self.send(Message::Ping).await;
@@ -128,6 +128,7 @@ impl<W: WebSocket, C: Send + Sync + 'static> Transport for WebSocketTransport<W,
     }
 }
 
+#[cfg(feature = "tungstenite")]
 pub(crate) fn convert<M, E>(value: Result<M, E>) -> Result<Message, Error>
 where
     M: Into<Message>,

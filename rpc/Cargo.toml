@@ -19,7 +19,7 @@ async-channel = "1.8.0"
 async-trait = "0.1.57"
 futures-channel = "0.3"
 futures-util = {version = "0.3", default-features = false, features = ["sink", "std"]}
-tokio = {version = "1.0.0", default-features = false, features = ["io-util", "io-std", "macros", "net", "rt-multi-thread", "time", "sync"]}
+tokio = {version = "1.0.0", default-features = false, features = ["macros", "rt", "sync"]}
 tokio-util = "0.7.4"
 
 tokio-tungstenite = { version = "0.24", optional = true }
@@ -33,13 +33,14 @@ warp = { version = "0.3.3", optional = true }
 prost-build = "0.11.5"
 
 [features]
-default = ["codegen", "memory", "websockets", "server"]
+default = ["codegen", "memory", "websockets", "server", "tokio-time"]
 codegen = ["dep:quote", "dep:prost-build", "dep:proc-macro2"]
 memory = []
 websockets = []
 client = []
 server = []
-tungstenite = ["dep:tokio-tungstenite"]
+tokio-time = ["tokio/time"]
+tungstenite = ["dep:tokio-tungstenite", "tokio/net", "tokio/io-util"]
 tungstenite-native-tls = ["tungstenite", "tokio-tungstenite/native-tls"]
 tungstenite-rustls = ["tungstenite", "tokio-tungstenite/rustls-tls-webpki-roots", "dep:rustls"]
 warp = ["dep:warp", "dep:tokio-tungstenite"]
