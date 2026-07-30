@@ -484,30 +484,38 @@ impl<T: Transport + 'static> ClientRequestDispatcher<T> {
         port_id: u32,
         message_number: u32,
     ) -> ClientResult<StreamProtocol<T>> {
-        let stream_protocol = StreamProtocol::new(
+        let mut stream_protocol = StreamProtocol::new(
             self.messages_handler.transport.clone(),
             port_id,
             message_number,
         );
 
         let client_messages_handler_listener_removal = self.messages_handler.clone();
-        match stream_protocol
+        let listener = stream_protocol
             .start_processing(move || async move {
                 // Callback for remove listener
                 client_messages_handler_listener_removal
                     .unregister_listener(message_number)
                     .await;
             })
-            .await
-        {
-            Ok(listener) => {
-                self.messages_handler
-                    .register_listener(message_number, listener)
-                    .await;
-                Ok(stream_protocol)
-            }
-            Err(_) => Err(ClientResultError::Client(ClientError::TransportError)),
+            .await;
+
+        // The listener must be registered BEFORE acking the open: the server starts
+        // streaming as soon as it receives the ACK, and a message arriving with no
+        // listener registered is dropped, stalling the stream forever on both sides.
+        self.messages_handler
+            .register_listener(message_number, listener)
+            .await;
+
+        if stream_protocol.acknowledge_open().await.is_err() {
+            self.messages_handler
+                .unregister_listener(message_number)
+                .await;
+            stream_protocol.close();
+            return Err(ClientResultError::Client(ClientError::TransportError));
         }
+
+        Ok(stream_protocol)
     }
 
     /// Puts to run a background task to wait the [`RpcServer`](crate::server::RpcServer)  acknowlege the stream openning and start sending client streams to the [`RpcServer`](crate::server::RpcServer)

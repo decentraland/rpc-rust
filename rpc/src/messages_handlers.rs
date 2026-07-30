@@ -20,7 +20,7 @@ use crate::{
     CommonError,
 };
 use async_channel::Sender as AsyncChannelSender;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use prost::Message;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{
@@ -167,16 +167,16 @@ impl ServerMessagesHandler {
     /// Receive a client streams procedure handler returned future and process it in a spawned background task.
     ///
     /// This function aims to run the procedure handler in spawned task to achieve processing requests concurrently.
+    ///
+    /// The listener for the client stream must already be registered by the caller (see
+    /// [`crate::stream_protocol::StreamProtocol::acknowledge_open`]) before the stream open is acked.
     pub fn process_client_streams_request<T: Transport + ?Sized + 'static>(
         self: Arc<Self>,
         transport: Arc<T>,
         message_number: u32,
-        client_stream_id: u32,
         procedure_handler: ClientStreamsResponse,
-        listener: AsyncChannelSender<(RpcMessageTypes, u32, StreamMessage)>,
     ) {
         tokio::spawn(async move {
-            self.register_listener(client_stream_id, listener).await;
             match procedure_handler.await {
                 Ok(procedure_response) => {
                     self.send_response(transport, message_number, procedure_response)
@@ -192,17 +192,17 @@ impl ServerMessagesHandler {
     /// Receive a bidirectional streams procedure handler returned future and process it in a spawned background task.
     ///
     /// This function aims to run the procedure handler in spawned task to achieve processing requests concurrently.
+    ///
+    /// The listener for the client stream half must already be registered by the caller (see
+    /// [`crate::stream_protocol::StreamProtocol::acknowledge_open`]) before the stream open is acked.
     pub fn process_bidir_streams_request<T: Transport + ?Sized + 'static>(
         self: Arc<Self>,
         transport: Arc<T>,
         message_number: u32,
         port_id: u32,
-        client_stream_id: u32,
-        listener: AsyncChannelSender<(RpcMessageTypes, u32, StreamMessage)>,
         procedure_handler: BiStreamsResponse,
     ) {
         tokio::spawn(async move {
-            self.register_listener(client_stream_id, listener).await;
             match self
                 .open_server_stream(transport.clone(), message_number, port_id)
                 .await
@@ -774,6 +774,14 @@ impl StreamsHandler {
                             if sender.send(payload).is_err() {
                                 error!("> Streams Handler > message_acknowledged_by_peer > Error while sending through the ack listener, seems to be dropped")
                             }
+                        }
+                        None if !stream_message.ack && !stream_message.closed => {
+                            // A data stream message with no listener attached anywhere: it is
+                            // being dropped and the peer is left waiting for an ACK for it.
+                            warn!(
+                                "> Streams Handler > message_acknowledged_by_peer > received stream item with no registered listener - dropped (msg_num={}, port={}, seq={})",
+                                message_number, stream_message.port_id, stream_message.sequence_id
+                            )
                         }
                         None => {
                             debug!("> Streams Handler > message_acknowledged_by_peer > ack listener not found")

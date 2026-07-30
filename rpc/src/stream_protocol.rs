@@ -19,7 +19,6 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     rpc_protocol::{parse::build_message_identifier, RpcMessageTypes, StreamMessage},
     transports::{Transport, TransportError},
-    CommonError,
 };
 
 /// It knows how to process all the stream messages for client streams, server streams and bidirectional streams.
@@ -148,7 +147,13 @@ impl<T: Transport + ?Sized + 'static> StreamProtocol<T> {
     }
 
     /// It sends an ACK stream message through the transport given to [`StreamProtocol`] to let the other half know that the strem is opened
-    async fn acknowledge_open(&self) -> Result<(), TransportError> {
+    ///
+    /// The other half starts sending stream messages as soon as it receives this ACK, so the
+    /// listener returned by [`start_processing`](#method.start_processing) MUST already be
+    /// registered in the messages handler before calling this function; otherwise the first
+    /// stream message can arrive with no listener attached and be dropped, leaving the remote
+    /// half waiting forever for an ACK that will never be sent.
+    pub(crate) async fn acknowledge_open(&self) -> Result<(), TransportError> {
         let stream_message = StreamMessage {
             port_id: self.port_id,
             sequence_id: self.last_received_sequence_id,
@@ -178,16 +183,18 @@ impl<T: Transport + ?Sized + 'static> StreamProtocol<T> {
     ///
     /// The callback expected in params, it should be to remove the listener from the messages handler when the the processing finishes
     ///
+    /// This function does NOT notify the other half that the stream is open. Callers must
+    /// first register the returned listener in their messages handler and only then send the
+    /// open ACK with [`acknowledge_open`](#method.acknowledge_open). Registering after acking
+    /// creates a race: the other half may send the first stream message before the listener
+    /// exists, that message is dropped, and the stream stalls forever on both sides.
     pub(crate) async fn start_processing<
         F: Future + Send,
         Callback: FnOnce() -> F + Send + 'static,
     >(
         &self,
         callback: Callback,
-    ) -> Result<AsyncChannelSender<(RpcMessageTypes, u32, StreamMessage)>, CommonError> {
-        if self.acknowledge_open().await.is_err() {
-            return Err(CommonError::TransportError);
-        }
+    ) -> AsyncChannelSender<(RpcMessageTypes, u32, StreamMessage)> {
         let token = self.process_cancellation_token.clone();
         let (messages_listener, messages_processor) = unbounded();
         let internal_channel = self.generator.1.clone();
@@ -205,7 +212,7 @@ impl<T: Transport + ?Sized + 'static> StreamProtocol<T> {
             }
         });
 
-        Ok(messages_listener)
+        messages_listener
     }
 
     /// Processes stream messages, it's called by the background task spawned in [`start_processing`](#method.start_processing)

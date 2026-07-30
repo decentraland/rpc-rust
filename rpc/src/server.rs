@@ -514,74 +514,84 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                     }
                     ProcedureDefinition::ClientStreams(procedure_handler) => {
                         let client_stream_id = request.client_stream;
-                        let stream_protocol = StreamProtocol::new(
+                        let mut stream_protocol = StreamProtocol::new(
                             transport.clone(),
                             request.port_id,
                             request.client_stream,
                         );
 
                         let msg_handler = self.messages_handler.clone();
-                        match stream_protocol
+                        let listener = stream_protocol
                             .start_processing(move || async move {
                                 msg_handler.unregister_listener(client_stream_id).await
                             })
-                            .await
-                        {
-                            Ok(listener) => {
-                                self.messages_handler
-                                    .clone()
-                                    .process_client_streams_request(
-                                        transport_cloned,
-                                        message_number,
-                                        client_stream_id,
-                                        procedure_handler(
-                                            stream_protocol.to_generator(Some),
-                                            procedure_ctx,
-                                        ),
-                                        listener,
-                                    );
-                            }
-                            Err(_) => {
-                                return Err(ServerResultError::Internal(
-                                    ServerInternalError::TransportError,
-                                ))
-                            }
+                            .await;
+
+                        // The listener must be registered BEFORE acking the open: the client
+                        // starts sending stream messages as soon as it receives the ACK, and a
+                        // message arriving with no listener registered is dropped, stalling the
+                        // stream forever on both sides.
+                        self.messages_handler
+                            .register_listener(client_stream_id, listener)
+                            .await;
+
+                        if stream_protocol.acknowledge_open().await.is_err() {
+                            self.messages_handler
+                                .unregister_listener(client_stream_id)
+                                .await;
+                            stream_protocol.close();
+                            return Err(ServerResultError::Internal(
+                                ServerInternalError::TransportError,
+                            ));
                         }
+
+                        self.messages_handler
+                            .clone()
+                            .process_client_streams_request(
+                                transport_cloned,
+                                message_number,
+                                procedure_handler(
+                                    stream_protocol.to_generator(Some),
+                                    procedure_ctx,
+                                ),
+                            );
                     }
                     ProcedureDefinition::BiStreams(procedure_handler) => {
                         let client_stream_id = request.client_stream;
-                        let stream_protocol = StreamProtocol::new(
+                        let mut stream_protocol = StreamProtocol::new(
                             transport.clone(),
                             request.port_id,
                             request.client_stream,
                         );
 
                         let msg_handler = self.messages_handler.clone();
-                        match stream_protocol
+                        let listener = stream_protocol
                             .start_processing(move || async move {
                                 msg_handler.unregister_listener(client_stream_id).await
                             })
-                            .await
-                        {
-                            Ok(listener) => {
-                                self.messages_handler.clone().process_bidir_streams_request(
-                                    transport_cloned,
-                                    message_number,
-                                    request.port_id,
-                                    client_stream_id,
-                                    listener,
-                                    procedure_handler(
-                                        stream_protocol.to_generator(Some),
-                                        procedure_ctx,
-                                    ),
-                                );
-                            }
-                            Err(_) => {
-                                return Err(ServerResultError::Internal(
-                                    ServerInternalError::TransportError,
-                                ))
-                            }
+                            .await;
+
+                        // See the ClientStreams arm above: register before acking the open.
+                        self.messages_handler
+                            .register_listener(client_stream_id, listener)
+                            .await;
+
+                        if stream_protocol.acknowledge_open().await.is_err() {
+                            self.messages_handler
+                                .unregister_listener(client_stream_id)
+                                .await;
+                            stream_protocol.close();
+                            return Err(ServerResultError::Internal(
+                                ServerInternalError::TransportError,
+                            ));
                         }
+
+                        self.messages_handler.clone().process_bidir_streams_request(
+                            transport_cloned,
+                            message_number,
+                            request.port_id,
+                            procedure_handler(stream_protocol.to_generator(Some), procedure_ctx),
+                        );
                     }
                 }
 
